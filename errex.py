@@ -641,10 +641,12 @@ def show_stats() -> None:
     error_types = Counter(extract_error_type(e.get("error", "")) for e in entries)
     days = Counter(e["timestamp"][:10] for e in entries if "timestamp" in e)
     hours = Counter(int(e["timestamp"][11:13]) for e in entries if "timestamp" in e)
+    ratings = [e["rating"] for e in entries if "rating" in e]
 
     busiest_day = max(days, key=days.get) if days else "—"
     busiest_hour = max(hours, key=hours.get) if hours else 0
     first_used = min(e["timestamp"][:10] for e in entries if "timestamp" in e)
+    avg_rating = f"{sum(ratings)/len(ratings):.1f}/5 ({len(ratings)} rated)" if ratings else "none yet"
 
     console.rule("[bold cyan]errex — Usage Stats[/bold cyan]")
     console.print()
@@ -653,6 +655,7 @@ def show_stats() -> None:
     summary = (
         f"[bold]{total}[/bold] total explanations\n"
         f"[bold]{brief_count}[/bold] brief  /  [bold]{total - brief_count}[/bold] full\n"
+        f"Avg rating: [dim]{avg_rating}[/dim]\n"
         f"First used: [dim]{first_used}[/dim]\n"
         f"Busiest day: [dim]{busiest_day} ({days.get(busiest_day, 0)} runs)[/dim]\n"
         f"Busiest hour: [dim]{busiest_hour:02d}:00–{busiest_hour:02d}:59[/dim]"
@@ -1537,6 +1540,82 @@ def retry_last(
     )
 
 
+def rate_last(score: int) -> None:
+    """Rate the last history entry 1-5 and store the rating."""
+    if not 1 <= score <= 5:
+        err_console.print("[red]errex: --rate expects a score between 1 and 5[/red]")
+        sys.exit(1)
+
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history to rate.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        lines = [l for l in f.readlines() if l.strip()]
+
+    if not lines:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    last = json.loads(lines[-1])
+    last["rating"] = score
+    lines[-1] = json.dumps(last) + "\n"
+
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    stars = "★" * score + "☆" * (5 - score)
+    err_snippet = last.get("error", "")[:60]
+    console.print(f"[green]Rated[/green] {stars} ({score}/5)  [dim]{err_snippet}[/dim]")
+
+
+def load_profile(name: str, file_config: dict) -> dict:
+    """Return config merged with the named profile from ~/.errexrc profiles dict."""
+    profiles = file_config.get("profiles", {})
+    if name not in profiles:
+        err_console.print(f"[red]errex: profile '{name}' not found.[/red]")
+        available = list(profiles.keys())
+        if available:
+            err_console.print(f"[dim]Available profiles: {', '.join(available)}[/dim]")
+        else:
+            err_console.print("[dim]No profiles saved yet. Create one by adding a \"profiles\" key to ~/.errexrc[/dim]")
+        sys.exit(1)
+    return {**CONFIG_DEFAULTS, **file_config, **profiles[name]}
+
+
+def run_bulk(
+    path: str,
+    model: str,
+    brief: bool,
+    terse: bool,
+    lang: str | None,
+    copy: bool,
+    show_tokens: bool,
+) -> None:
+    """Explain multiple errors from a file, separated by blank lines."""
+    content = read_file(path)
+    blocks = [b.strip() for b in re.split(r"\n{2,}", content) if b.strip()]
+
+    if not blocks:
+        console.print(f"[yellow]No error blocks found in {path}.[/yellow]")
+        return
+
+    console.print(f"[bold]{len(blocks)} error block{'s' if len(blocks) != 1 else ''}[/bold] found in [cyan]{Path(path).name}[/cyan]\n")
+
+    for i, block in enumerate(blocks, 1):
+        console.rule(f"[bold cyan]Block {i} of {len(blocks)}[/bold cyan]")
+        print()
+        explain_error(
+            block,
+            model=model,
+            brief=brief,
+            terse=terse,
+            lang=lang,
+            copy=copy,
+            show_tokens=show_tokens,
+        )
+
+
 def run_doctor() -> None:
     """Check that errex is set up and working correctly."""
     console.rule("[bold cyan]errex — Doctor[/bold cyan]")
@@ -1873,7 +1952,22 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
 
 
 def main() -> None:
+    # Two-pass: detect --profile before full parse so profile defaults can be set
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--profile", default=None)
+    _pre_args, _ = _pre.parse_known_args()
+
+    file_config: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as _f:
+                file_config = json.load(_f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
     config = load_config()
+    if _pre_args.profile:
+        config = load_profile(_pre_args.profile, file_config)
 
     try:
         _ver = importlib.metadata.version("errex")
@@ -1934,6 +2028,14 @@ def main() -> None:
                         help="save this explanation with a memorable name for quick retrieval")
     parser.add_argument("--grep", nargs=2, metavar=("PATTERN", "FILE"),
                         help="filter a log file by regex pattern, then explain matching lines")
+    parser.add_argument("--ci", action="store_true",
+                        help="CI mode: no-color + terse output, GitHub Actions annotations, exits 1")
+    parser.add_argument("--rate", metavar="SCORE", type=int, dest="rate",
+                        help="rate the last explanation 1-5 (stored in history, shown in --stats)")
+    parser.add_argument("--profile", metavar="NAME",
+                        help="load a named config profile from ~/.errexrc (overrides config, CLI wins)")
+    parser.add_argument("--bulk", metavar="FILE",
+                        help="explain multiple errors from a file separated by blank lines")
     parser.add_argument("--explain-exit", metavar="CODE", type=int, dest="explain_exit",
                         help="explain a shell exit code (e.g. --explain-exit 139 → segfault)")
     parser.add_argument("--webhook", metavar="URL",
@@ -1957,13 +2059,31 @@ def main() -> None:
     parser.set_defaults(**config)
     args = parser.parse_args()
 
-    if args.no_color:
-        global console, err_console
+    global console, err_console, API_TIMEOUT
+    API_TIMEOUT = args.timeout
+
+    if args.no_color or args.ci:
         console = Console(no_color=True, highlight=False)
         err_console = Console(stderr=True, no_color=True, highlight=False)
 
-    global API_TIMEOUT
-    API_TIMEOUT = args.timeout
+    if args.ci:
+        args.terse = True
+
+    if args.rate is not None:
+        rate_last(args.rate)
+        return
+
+    if args.bulk:
+        run_bulk(
+            args.bulk,
+            model=args.model,
+            brief=args.brief or False,
+            terse=args.terse,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
+        return
 
     if "--config" in sys.argv:
         manage_config(args.config)
@@ -2158,6 +2278,10 @@ def main() -> None:
         env_block = get_env_info()
         context_text = (context_text + "\n\n" if context_text else "") + f"System environment:\n{env_block}"
 
+    if args.ci and os.environ.get("GITHUB_ACTIONS"):
+        first_line = error_text.splitlines()[0][:200] if error_text else "error"
+        print(f"::error::{first_line}")
+
     explain_error(
         error_text,
         model=args.model,
@@ -2178,6 +2302,9 @@ def main() -> None:
         output_file=args.output,
         webhook=args.webhook,
     )
+
+    if args.ci:
+        sys.exit(1)
 
     check_for_update()
 
