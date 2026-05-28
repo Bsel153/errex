@@ -264,6 +264,175 @@ def show_stats() -> None:
     console.print()
 
 
+def detect_environment() -> dict:
+    """Detect installed languages and tools, return suggested config values."""
+    tools = {
+        "python": ["python3", "python"],
+        "node": ["node"],
+        "go": ["go"],
+        "rust": ["rustc"],
+        "ruby": ["ruby"],
+        "java": ["java"],
+        "php": ["php"],
+    }
+    found = []
+    for lang, cmds in tools.items():
+        for cmd in cmds:
+            result = subprocess.run(["which", cmd], capture_output=True, text=True)
+            if result.returncode == 0:
+                found.append(lang)
+                break
+
+    # Pick the most prominent lang as default hint
+    lang_default = found[0] if len(found) == 1 else None
+    return {"detected": found, "lang_default": lang_default}
+
+
+def scan_logs() -> None:
+    """Scan common locations for recent log files containing errors, offer a picker."""
+    search_dirs = [
+        Path.home() / ".npm" / "_logs",
+        Path.home() / "Library" / "Logs",
+        Path.home() / "Library" / "Application Support",
+        Path("/var/log"),
+        Path("/tmp"),
+        Path.cwd(),
+    ]
+
+    error_keywords = re.compile(
+        r'\b(error|exception|traceback|fatal|panic|fail|critical|stderr)\b',
+        re.IGNORECASE,
+    )
+
+    console.print("[bold]Scanning for recent error logs…[/bold]\n")
+    candidates: list[tuple[float, Path]] = []
+
+    for base in search_dirs:
+        if not base.exists():
+            continue
+        try:
+            for p in base.rglob("*.log"):
+                try:
+                    stat = p.stat()
+                    if stat.st_size == 0 or stat.st_size > 10 * 1024 * 1024:
+                        continue
+                    # Quick scan: check if file contains error-like lines
+                    with open(p, encoding="utf-8", errors="ignore") as f:
+                        sample = f.read(4096)
+                    if error_keywords.search(sample):
+                        candidates.append((stat.st_mtime, p))
+                except (PermissionError, OSError):
+                    continue
+        except (PermissionError, OSError):
+            continue
+
+    if not candidates:
+        console.print("[yellow]No error logs found in common locations.[/yellow]")
+        console.print("[dim]Try: errex --watch /path/to/your.log[/dim]")
+        return
+
+    # Sort by most recent, take top 10
+    candidates.sort(reverse=True)
+    top = candidates[:10]
+
+    from rich.table import Table as RichTable
+    table = RichTable(show_header=True, header_style="bold cyan", box=None)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("File", style="cyan")
+    table.add_column("Modified", style="dim", width=20)
+    table.add_column("Size", justify="right", style="dim", width=8)
+
+    for i, (mtime, p) in enumerate(top, 1):
+        modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        size = p.stat().st_size
+        size_str = f"{size // 1024}KB" if size >= 1024 else f"{size}B"
+        table.add_row(str(i), str(p), modified, size_str)
+
+    console.print(table)
+    console.print()
+
+    try:
+        choice = input("Pick a file to explain (1–{}, or q to quit): ".format(len(top))).strip()
+        if choice.lower() == "q" or not choice:
+            return
+        idx = int(choice) - 1
+        if not 0 <= idx < len(top):
+            console.print("[red]Invalid choice.[/red]")
+            return
+        chosen = top[idx][1]
+        console.print(f"\n[dim]Reading {chosen}…[/dim]\n")
+        error_text = chosen.read_text(encoding="utf-8", errors="replace").strip()
+        if len(error_text) > 8000:
+            error_text = error_text[-8000:]  # use the tail where errors usually are
+        explain_error(error_text, model=load_config()["model"])
+    except (ValueError, KeyboardInterrupt):
+        console.print("\n[dim]Cancelled.[/dim]")
+
+
+def run_setup() -> None:
+    """Interactive first-run wizard: check API key, detect env, write ~/.errexrc."""
+    console.rule("[bold cyan]errex — Setup Wizard[/bold cyan]")
+    console.print()
+
+    # 1. API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        console.print(f"[green]✓[/green] ANTHROPIC_API_KEY is set ({api_key[:8]}…)")
+    else:
+        console.print("[red]✗[/red] ANTHROPIC_API_KEY is not set.")
+        console.print("  Get one at [cyan]https://console.anthropic.com/[/cyan]")
+        console.print("  Then add to your shell config:")
+        console.print('  [dim]export ANTHROPIC_API_KEY=sk-ant-...[/dim]\n')
+
+    # 2. Detect environment
+    console.print("\n[bold]Detecting your environment…[/bold]")
+    env = detect_environment()
+    if env["detected"]:
+        console.print(f"[green]✓[/green] Found: {', '.join(env['detected'])}")
+    else:
+        console.print("[dim]No common runtimes detected.[/dim]")
+
+    # 3. Build config
+    existing = load_config()
+    config: dict = {}
+
+    if env["lang_default"] and not existing.get("lang"):
+        config["lang"] = env["lang_default"]
+        console.print(f"  → Setting default language: [cyan]{env['lang_default']}[/cyan]")
+
+    # Suggest opus if only one language (power user), sonnet otherwise
+    if not existing.get("model") or existing.get("model") == "claude-sonnet-4-6":
+        config["model"] = "claude-sonnet-4-6"
+
+    # 4. Write config
+    if config:
+        merged = {**existing, **config}
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(merged, f, indent=2)
+        console.print(f"\n[green]✓[/green] Wrote config to [cyan]{CONFIG_FILE}[/cyan]")
+    else:
+        console.print("\n[dim]Config unchanged.[/dim]")
+
+    # 5. Shell integration
+    console.print()
+    shell = os.environ.get("SHELL", "")
+    rc_file = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
+    shell_already = rc_file.exists() and "errex-last" in rc_file.read_text()
+    if shell_already:
+        console.print(f"[green]✓[/green] Shell integration already in {rc_file}")
+    else:
+        try:
+            ans = input("Install errex-last() shell function? [Y/n]: ").strip().lower()
+        except KeyboardInterrupt:
+            ans = "n"
+        if ans in ("", "y"):
+            install_shell()
+
+    console.print()
+    console.rule("[dim]Setup complete[/dim]")
+    console.print("\nRun [cyan]errex --scan[/cyan] to find error logs, or just pipe any error:\n  [dim]cat error.log | errex[/dim]\n")
+
+
 def install_shell() -> None:
     shell = os.environ.get("SHELL", "")
     rc_file = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
@@ -472,6 +641,8 @@ def main() -> None:
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
+    parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
+    parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -482,6 +653,14 @@ def main() -> None:
     if args.web:
         from web import serve
         serve()
+        return
+
+    if args.setup:
+        run_setup()
+        return
+
+    if args.scan:
+        scan_logs()
         return
 
     if args.install_shell:
