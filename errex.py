@@ -63,7 +63,7 @@ def get_error_input(file: str | None) -> str:
     return "\n".join(lines).strip()
 
 
-def explain_error(error_text: str, model: str) -> None:
+def explain_error(error_text: str, model: str, brief: bool = False) -> None:
     """Stream an explanation of the error from Claude."""
     client = anthropic.Anthropic()
 
@@ -71,9 +71,14 @@ def explain_error(error_text: str, model: str) -> None:
     print("  errex — Error Analysis")
     print("─" * 60 + "\n")
 
+    if brief:
+        prompt = f"In one short paragraph, tell me: what this error is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```"
+    else:
+        prompt = f"Please explain this error:\n\n```\n{error_text}\n```"
+
     with client.messages.stream(
         model=model,
-        max_tokens=2048,
+        max_tokens=2048 if not brief else 256,
         system=[
             {
                 "type": "text",
@@ -81,12 +86,7 @@ def explain_error(error_text: str, model: str) -> None:
                 "cache_control": {"type": "ephemeral"},
             }
         ],
-        messages=[
-            {
-                "role": "user",
-                "content": f"Please explain this error:\n\n```\n{error_text}\n```",
-            }
-        ],
+        messages=[{"role": "user", "content": prompt}],
     ) as stream:
         for text in stream.text_stream:
             print(text, end="", flush=True)
@@ -105,6 +105,11 @@ def main() -> None:
         default="claude-sonnet-4-6",
         help="Claude model to use (default: claude-sonnet-4-6)",
     )
+    parser.add_argument(
+        "--brief",
+        action="store_true",
+        help="one-paragraph summary instead of full analysis",
+    )
     args = parser.parse_args()
 
     error_text = get_error_input(args.file)
@@ -113,7 +118,7 @@ def main() -> None:
         parser.print_usage(sys.stderr)
         sys.exit(1)
 
-    explain_error(error_text, args.model)
+    explain_error(error_text, args.model, args.brief)
 
 
 if __name__ == "__main__":
