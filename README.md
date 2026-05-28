@@ -35,6 +35,9 @@ errex traceback.txt
 # Pipe from another command
 cat error.log | errex
 errex < error.log
+
+# Use a different Claude model
+errex --model claude-opus-4-7 traceback.txt
 ```
 
 ## What you get
