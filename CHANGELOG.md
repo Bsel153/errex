@@ -2,6 +2,15 @@
 
 All notable changes to errex are documented here.
 
+## [0.10.0] — 2026-05-28
+### Added
+- `--doctor`: health check — verifies API key, live API connectivity, config validity, history, and PyPI version
+- `--completion bash|zsh`: print a shell completion script (`source <(errex --completion zsh)`)
+- `--translate LANG`: respond in any spoken language (e.g. `--translate Spanish`)
+- `--save-as NAME`: tag an explanation with a name for quick retrieval from history
+- `--grep PATTERN FILE`: filter a log file by regex, then explain the matching lines
+- `--test-gen FILE`: generate a pytest/jest/go test case from a code file; pipe an error to reproduce the bug
+
 ## [0.9.0] — 2026-05-28
 ### Added
 - `--version`: show the installed version
