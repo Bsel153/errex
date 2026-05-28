@@ -14,28 +14,27 @@ $ cat traceback.txt | errex.py
 This is a Python type error...
 ```
 
-## Requirements
+## Install
 
-- Python 3.8+
-- An [Anthropic API key](https://console.anthropic.com/)
-
-```
-pip install anthropic
+```bash
+pip install git+https://github.com/Bsel153/errex.git
 export ANTHROPIC_API_KEY=sk-...
 ```
+
+Requires Python 3.8+ and an [Anthropic API key](https://console.anthropic.com/).
 
 ## Usage
 
 ```bash
 # Interactive — paste your error, then Ctrl+D (Mac/Linux) or Ctrl+Z+Enter (Windows)
-python errex.py
+errex
 
 # Read from a file
-python errex.py traceback.txt
+errex traceback.txt
 
 # Pipe from another command
-cat error.log | python errex.py
-python errex.py < error.log
+cat error.log | errex
+errex < error.log
 ```
 
 ## What you get
