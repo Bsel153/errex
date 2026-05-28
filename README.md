@@ -50,6 +50,10 @@ errex --json traceback.txt
 
 # Use a different Claude model
 errex --model claude-opus-4-7 traceback.txt
+
+# View past explanations
+errex --history
+errex --history "KeyError"
 ```
 
 Past explanations are saved to `~/.errex_history` (one JSON object per line).

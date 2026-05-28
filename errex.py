@@ -169,6 +169,32 @@ def explain_error(
         copy_to_clipboard(full_response)
 
 
+def show_history(search: str | None) -> None:
+    """Print past explanations from the history file."""
+    if not os.path.exists(HISTORY_FILE):
+        print("No history yet.", file=sys.stderr)
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if search:
+        entries = [e for e in entries if search.lower() in e.get("error", "").lower()
+                   or search.lower() in e.get("explanation", "").lower()]
+
+    if not entries:
+        print("No matching history entries.", file=sys.stderr)
+        sys.exit(0)
+
+    for entry in entries:
+        print("─" * 60)
+        print(f"  {entry['timestamp'][:19]}  |  {entry['model']}{'  |  brief' if entry.get('brief') else ''}")
+        print(f"  Error: {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}")
+        print()
+        print(entry["explanation"])
+        print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="errex",
@@ -200,7 +226,18 @@ def main() -> None:
         dest="json_output",
         help="output structured JSON (error_type, root_cause, fix_steps, gotchas)",
     )
+    parser.add_argument(
+        "--history",
+        nargs="?",
+        const="",
+        metavar="SEARCH",
+        help="show past explanations, optionally filtered by a search term",
+    )
     args = parser.parse_args()
+
+    if args.history is not None:
+        show_history(args.history or None)
+        return
 
     error_text = get_error_input(args.file)
 
