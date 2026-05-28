@@ -26,10 +26,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import re
+from collections import Counter
+
 import anthropic
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.rule import Rule
+from rich.table import Table
+from rich.panel import Panel
+from rich.columns import Columns
 
 console = Console()
 err_console = Console(stderr=True)
@@ -154,6 +160,86 @@ def show_history(search: str | None) -> None:
         console.print(f"[bold red]Error:[/bold red] {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}\n")
         console.print(Markdown(entry["explanation"]))
         console.print()
+
+
+def extract_error_type(error_text: str) -> str:
+    """Best-effort extraction of an error type label from raw error text."""
+    # Python-style: TypeError, ImportError, etc.
+    m = re.search(r'\b([A-Z][a-zA-Z]*(?:Error|Exception|Warning|Fault|Panic))\b', error_text)
+    if m:
+        return m.group(1)
+    # Go panic
+    if re.search(r'\bpanic\b', error_text, re.I):
+        return "panic"
+    # HTTP status codes
+    m = re.search(r'\b(4\d{2}|5\d{2})\b', error_text)
+    if m:
+        return f"HTTP {m.group(1)}"
+    # Segfault / signal
+    m = re.search(r'\b(SIGSEGV|SIGABRT|SIGFPE|segfault|segmentation fault)\b', error_text, re.I)
+    if m:
+        return "segfault"
+    # SQL
+    if re.search(r'\bsql\b|\bquery\b|\bcolumn\b|\btable\b', error_text, re.I):
+        return "SQL error"
+    return "unknown"
+
+
+def show_stats() -> None:
+    """Print usage statistics from ~/.errex_history."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet — run errex on some errors first.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History file is empty.[/yellow]")
+        sys.exit(0)
+
+    total = len(entries)
+    brief_count = sum(1 for e in entries if e.get("brief"))
+    models = Counter(e.get("model", "unknown") for e in entries)
+    error_types = Counter(extract_error_type(e.get("error", "")) for e in entries)
+    days = Counter(e["timestamp"][:10] for e in entries if "timestamp" in e)
+    hours = Counter(int(e["timestamp"][11:13]) for e in entries if "timestamp" in e)
+
+    busiest_day = max(days, key=days.get) if days else "—"
+    busiest_hour = max(hours, key=hours.get) if hours else 0
+    first_used = min(e["timestamp"][:10] for e in entries if "timestamp" in e)
+
+    console.rule("[bold cyan]errex — Usage Stats[/bold cyan]")
+    console.print()
+
+    # Summary panel
+    summary = (
+        f"[bold]{total}[/bold] total explanations\n"
+        f"[bold]{brief_count}[/bold] brief  /  [bold]{total - brief_count}[/bold] full\n"
+        f"First used: [dim]{first_used}[/dim]\n"
+        f"Busiest day: [dim]{busiest_day} ({days.get(busiest_day, 0)} runs)[/dim]\n"
+        f"Busiest hour: [dim]{busiest_hour:02d}:00–{busiest_hour:02d}:59[/dim]"
+    )
+    console.print(Panel(summary, title="Overview", border_style="cyan"))
+    console.print()
+
+    # Models table
+    model_table = Table(title="Models used", show_header=True, header_style="bold magenta")
+    model_table.add_column("Model", style="cyan")
+    model_table.add_column("Count", justify="right")
+    model_table.add_column("Share", justify="right")
+    for model, count in models.most_common():
+        model_table.add_row(model, str(count), f"{count/total*100:.0f}%")
+
+    # Error types table
+    type_table = Table(title="Top error types", show_header=True, header_style="bold magenta")
+    type_table.add_column("Error type", style="red")
+    type_table.add_column("Count", justify="right")
+    for etype, count in error_types.most_common(8):
+        type_table.add_row(etype, str(count))
+
+    console.print(Columns([model_table, type_table], equal=False, expand=False))
+    console.print()
 
 
 def install_shell() -> None:
@@ -302,8 +388,13 @@ def main() -> None:
     parser.add_argument("--watch", metavar="LOGFILE", help="watch a log file and explain errors as they appear")
     parser.add_argument("--history", nargs="?", const="", metavar="SEARCH", help="show past explanations, optionally filtered by a search term")
     parser.add_argument("--install-shell", action="store_true", help="add errex-last() function to your shell config")
+    parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.stats:
+        show_stats()
+        return
 
     if args.install_shell:
         install_shell()
