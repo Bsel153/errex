@@ -275,6 +275,69 @@ def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> 
         copy_to_clipboard(response)
 
 
+def clear_history(before_days: int | None) -> None:
+    """Delete all or old history entries with a confirmation prompt."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history to clear.[/yellow]")
+        return
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is already empty.[/yellow]")
+        return
+
+    if before_days is not None:
+        cutoff = datetime.now().timestamp() - before_days * 86400
+        to_keep = []
+        to_delete = []
+        for e in entries:
+            try:
+                ts = datetime.fromisoformat(e["timestamp"]).timestamp()
+                (to_delete if ts < cutoff else to_keep).append(e)
+            except (KeyError, ValueError):
+                to_keep.append(e)
+
+        if not to_delete:
+            console.print(f"[yellow]No entries older than {before_days} days.[/yellow]")
+            return
+
+        console.print(
+            f"This will delete [bold]{len(to_delete)}[/bold] entr{'y' if len(to_delete)==1 else 'ies'} "
+            f"older than {before_days} days. [dim]({len(to_keep)} will remain)[/dim]"
+        )
+        try:
+            ans = input("Proceed? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            for e in to_keep:
+                f.write(json.dumps(e) + "\n")
+        console.print(f"[green]Deleted {len(to_delete)} old entr{'y' if len(to_delete)==1 else 'ies'}.[/green]")
+
+    else:
+        console.print(
+            f"This will permanently delete [bold]all {len(entries)}[/bold] history entr{'y' if len(entries)==1 else 'ies'}."
+        )
+        try:
+            ans = input("Proceed? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/dim]")
+            return
+
+        HISTORY_FILE.unlink()
+        console.print(f"[green]Cleared {len(entries)} history entr{'y' if len(entries)==1 else 'ies'}.[/green]")
+
+
 def export_history(output_path: str, fmt: str) -> None:
     """Export history to an HTML or Markdown file."""
     if not HISTORY_FILE.exists():
@@ -1059,8 +1122,15 @@ def main() -> None:
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
+    parser.add_argument("--clear-history", nargs="?", const=0, type=int, metavar="DAYS", dest="clear_history",
+                        help="delete history entries (all by default; pass DAYS to only remove entries older than N days)")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.clear_history is not None:
+        days = args.clear_history if args.clear_history > 0 else None
+        clear_history(days)
+        return
 
     if args.ask:
         ask_about_last(
