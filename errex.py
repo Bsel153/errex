@@ -85,14 +85,18 @@ def load_config() -> dict:
     return defaults
 
 
-def get_error_input(file: str | None) -> str:
-    """Read error input from a file argument, piped stdin, or interactive paste."""
-    if file:
-        if not os.path.exists(file):
-            err_console.print(f"[red]errex: file not found: {file}[/red]")
-            sys.exit(1)
-        with open(file, "r", encoding="utf-8", errors="replace") as f:
-            return f.read().strip()
+def read_file(path: str) -> str:
+    if not os.path.exists(path):
+        err_console.print(f"[red]errex: file not found: {path}[/red]")
+        sys.exit(1)
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read().strip()
+
+
+def get_error_input(files: list[str]) -> str:
+    """Read error input from file argument(s), piped stdin, or interactive paste."""
+    if files:
+        return read_file(files[0])
 
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
@@ -336,6 +340,61 @@ def explain_error(
         copy_to_clipboard(response)
 
 
+def compare_errors(files: list[str], model: str, lang: str | None, copy: bool) -> None:
+    """Explain multiple errors and analyse whether they share a root cause."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    errors = []
+    for path in files:
+        errors.append((path, read_file(path)))
+
+    lang_hint = f" (language: {lang})" if lang else ""
+    blocks = "\n\n".join(
+        f"### Error {i+1}: {path}\n```\n{text}\n```"
+        for i, (path, text) in enumerate(errors)
+    )
+    prompt = (
+        f"I have {len(errors)} errors{lang_hint}. For each one:\n"
+        f"1. Identify the error type and explain it briefly.\n\n"
+        f"Then, after explaining all of them:\n"
+        f"2. Are these errors related or do they share a root cause? Explain.\n"
+        f"3. Give a unified fix plan if they're connected, or separate fixes if not.\n\n"
+        f"{blocks}"
+    )
+
+    console.rule(f"[bold cyan]errex — Comparing {len(errors)} errors[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=3000,
+            system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    print()
+    console.rule(style="dim")
+    print()
+
+    full_response = "".join(collected)
+    combined_error = " | ".join(f"{p}: {t[:100]}" for p, t in errors)
+    save_history(combined_error, full_response, model, False)
+
+    if copy:
+        copy_to_clipboard(full_response)
+
+
 def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
     """Tail a log file and explain errors as they appear."""
     if not os.path.exists(path):
@@ -378,7 +437,7 @@ def main() -> None:
         prog="errex",
         description="Paste or pipe an error message and get a plain-English explanation.",
     )
-    parser.add_argument("file", nargs="?", help="path to a file containing the error")
+    parser.add_argument("files", nargs="*", help="one or more files containing errors (pass 2+ to compare them)")
     parser.add_argument("--model", help="Claude model to use (default: claude-sonnet-4-6)")
     parser.add_argument("--brief", action="store_true", default=None, help="one-paragraph summary instead of full analysis")
     parser.add_argument("--lang", help="language or runtime hint when ambiguous (e.g. rust, go, java)")
@@ -408,7 +467,11 @@ def main() -> None:
         watch_file(args.watch, model=args.model, brief=args.brief or False, lang=args.lang)
         return
 
-    error_text = get_error_input(args.file)
+    if len(args.files) >= 2:
+        compare_errors(args.files, model=args.model, lang=args.lang, copy=args.copy or False)
+        return
+
+    error_text = get_error_input(args.files)
 
     if not error_text:
         parser.print_usage(sys.stderr)
