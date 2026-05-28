@@ -608,10 +608,15 @@ def clear_history(before_days: int | None) -> None:
         console.print("[yellow]History is already empty.[/yellow]")
         return
 
+    pinned = [e for e in entries if e.get("pinned")]
+
     if before_days is not None:
         cutoff = datetime.now().timestamp() - before_days * 86400
         to_keep, to_delete = [], []
         for e in entries:
+            if e.get("pinned"):
+                to_keep.append(e)
+                continue
             try:
                 ts = datetime.fromisoformat(e["timestamp"]).timestamp()
                 (to_delete if ts < cutoff else to_keep).append(e)
@@ -623,7 +628,8 @@ def clear_history(before_days: int | None) -> None:
             return
 
         s = "y" if len(to_delete) == 1 else "ies"
-        console.print(f"This will delete [bold]{len(to_delete)}[/bold] entr{s} older than {before_days} days. [dim]({len(to_keep)} will remain)[/dim]")
+        pin_note = f"  [dim]({len(pinned)} pinned entr{'y' if len(pinned) == 1 else 'ies'} kept)[/dim]" if pinned else ""
+        console.print(f"This will delete [bold]{len(to_delete)}[/bold] entr{s} older than {before_days} days. [dim]({len(to_keep)} will remain)[/dim]{pin_note}")
         try:
             ans = input("Proceed? [y/N]: ").strip().lower()
         except KeyboardInterrupt:
@@ -637,8 +643,10 @@ def clear_history(before_days: int | None) -> None:
                 f.write(json.dumps(e) + "\n")
         console.print(f"[green]Deleted {len(to_delete)} old entr{s}.[/green]")
     else:
-        s = "y" if len(entries) == 1 else "ies"
-        console.print(f"This will permanently delete [bold]all {len(entries)}[/bold] history entr{s}.")
+        deletable = [e for e in entries if not e.get("pinned")]
+        s = "y" if len(deletable) == 1 else "ies"
+        pin_note = f"  [dim]({len(pinned)} pinned entr{'y' if len(pinned) == 1 else 'ies'} will be kept)[/dim]" if pinned else ""
+        console.print(f"This will permanently delete [bold]{len(deletable)}[/bold] history entr{s}.{pin_note}")
         try:
             ans = input("Proceed? [y/N]: ").strip().lower()
         except KeyboardInterrupt:
@@ -647,8 +655,13 @@ def clear_history(before_days: int | None) -> None:
         if ans != "y":
             console.print("[dim]Cancelled.[/dim]")
             return
-        HISTORY_FILE.unlink()
-        console.print(f"[green]Cleared {len(entries)} history entr{s}.[/green]")
+        if pinned:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                for e in pinned:
+                    f.write(json.dumps(e) + "\n")
+        else:
+            HISTORY_FILE.unlink()
+        console.print(f"[green]Cleared {len(deletable)} history entr{s}.[/green]")
 
 
 def export_history(output_path: str, fmt: str) -> None:
@@ -2307,6 +2320,7 @@ def print_completion(shell: str) -> None:
         "--config", "--clear-history", "--recent", "--summarize-log", "--retry",
         "--test-gen", "--translate", "--save-as", "--grep", "--doctor",
         "--completion", "--version", "--help",
+        "--explain-sql", "--list-named", "--run", "--delete-profile", "--pin", "--unpin",
     ]
     models = ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"]
 
@@ -2397,6 +2411,15 @@ def grep_and_explain(
         show_tokens=show_tokens,
     )
 
+
+SQL_PROMPT = """You are a senior database engineer and SQL expert. When given a SQL query, explain it clearly:
+
+1. **What it does** — plain-English summary of the query's purpose (one sentence)
+2. **Clause-by-clause breakdown** — explain each clause: SELECT, FROM, JOIN, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, subqueries, CTEs
+3. **Performance notes** — flag anything that could be slow: missing indexes, SELECT *, Cartesian products, N+1 patterns, or returning large result sets without a LIMIT
+4. **Gotchas** — subtle behaviour: NULL handling, implicit type coercion, dialect differences (MySQL vs PostgreSQL vs SQLite vs SQL Server), case sensitivity, aggregation without GROUP BY
+
+Use markdown. Be concise but complete. If the query looks like it may have a bug or unintended behaviour, say so."""
 
 TEST_GEN_PROMPT = """You are a senior software engineer. Given a code file (and optionally an error that occurs when running it), generate a minimal, runnable test case.
 
@@ -2558,6 +2581,168 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
         chat_loop(code, response, model, lang)
 
 
+def explain_sql(query: str, model: str, copy: bool, show_tokens: bool) -> None:
+    """Explain a SQL query in plain English."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    prompt = f"Explain this SQL query:\n\n```sql\n{query}\n```"
+
+    console.rule("[bold cyan]errex — SQL Explanation[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=[{"type": "text", "text": SQL_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(query, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def list_named() -> None:
+    """List all history entries saved with --save-as."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    named = [e for e in entries if e.get("name")]
+
+    if not named:
+        console.print("[yellow]No named entries yet.[/yellow]")
+        console.print("[dim]Save an explanation with: errex --save-as NAME[/dim]")
+        return
+
+    console.rule("[bold cyan]errex — Named Entries[/bold cyan]")
+    console.print(f"[dim]{len(named)} saved entr{'y' if len(named) == 1 else 'ies'}[/dim]\n")
+
+    table = Table(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+    table.add_column("Name", style="cyan", min_width=15)
+    table.add_column("Date", style="dim", width=17)
+    table.add_column("Model", style="dim", width=22)
+    table.add_column("Error", style="red")
+
+    for entry in named:
+        ts = entry.get("timestamp", "")[:16]
+        model = entry.get("model", "")
+        error = entry.get("error", "")[:60]
+        table.add_row(entry["name"], ts, model, error)
+
+    console.print(table)
+    console.print(f"\n[dim]Retrieve with: errex --find-name NAME[/dim]")
+
+
+def run_command(cmd: str, model: str, brief: bool, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Run a shell command and explain its output if it fails."""
+    console.print(f"[bold]Running:[/bold] [cyan]{cmd}[/cyan]\n")
+
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    output = (result.stdout + "\n" + result.stderr).strip()
+
+    if result.returncode == 0:
+        console.print("[green]Command succeeded (exit 0) — nothing to explain.[/green]")
+        if output:
+            console.print(f"\n[dim]{output[:200]}{'...' if len(output) > 200 else ''}[/dim]")
+        return
+
+    console.print(f"[yellow]Failed (exit {result.returncode})[/yellow]\n")
+    if not output:
+        console.print("[dim]No output captured — explaining the exit code.[/dim]\n")
+        explain_exit_code(result.returncode, model=model, copy=copy)
+        return
+
+    explain_error(output, model=model, brief=brief, lang=lang, copy=copy, show_tokens=show_tokens)
+
+
+def delete_profile(name: str) -> None:
+    """Delete a named profile from ~/.errexrc."""
+    if not CONFIG_FILE.exists():
+        err_console.print(f"[red]errex: no config file at {CONFIG_FILE}[/red]")
+        sys.exit(1)
+
+    try:
+        with open(CONFIG_FILE) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        err_console.print(f"[red]errex: could not read config: {e}[/red]")
+        sys.exit(1)
+
+    profiles = data.get("profiles", {})
+    if name not in profiles:
+        err_console.print(f"[red]errex: profile '{name}' not found.[/red]")
+        available = list(profiles.keys())
+        if available:
+            err_console.print(f"[dim]Available profiles: {', '.join(available)}[/dim]")
+        else:
+            err_console.print("[dim]No profiles saved.[/dim]")
+        sys.exit(1)
+
+    del profiles[name]
+    if profiles:
+        data["profiles"] = profiles
+    else:
+        data.pop("profiles", None)
+
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+    console.print(f"[green]Deleted profile[/green] [cyan]{name}[/cyan]  [dim]({CONFIG_FILE})[/dim]")
+
+
+def pin_entry(pin: bool) -> None:
+    """Pin or unpin the last history entry."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        lines = [ln for ln in f.readlines() if ln.strip()]
+
+    if not lines:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    last = json.loads(lines[-1])
+    last["pinned"] = pin
+    lines[-1] = json.dumps(last) + "\n"
+
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    err_snippet = last.get("error", "")[:60]
+    if pin:
+        console.print(f"[green]Pinned[/green] [dim](protected from --clear-history)[/dim]  [dim]{err_snippet}[/dim]")
+    else:
+        console.print(f"[dim]Unpinned[/dim]  [dim]{err_snippet}[/dim]")
+
+
 def main() -> None:
     # Two-pass: detect --profile before full parse so profile defaults can be set
     _pre = argparse.ArgumentParser(add_help=False)
@@ -2689,6 +2874,18 @@ def main() -> None:
                         help="auto-attach system info (OS, Python, shell, runtimes) as context")
     parser.add_argument("--explain-regex", metavar="PATTERN", dest="explain_regex",
                         help="explain what a regular expression matches in plain English")
+    parser.add_argument("--explain-sql", metavar="QUERY", dest="explain_sql",
+                        help="explain what a SQL query does and flag potential performance issues")
+    parser.add_argument("--list-named", action="store_true", dest="list_named",
+                        help="list all history entries saved with --save-as")
+    parser.add_argument("--run", metavar="CMD",
+                        help="run a shell command and auto-explain any error output")
+    parser.add_argument("--delete-profile", metavar="NAME", dest="delete_profile",
+                        help="delete a named profile from ~/.errexrc")
+    parser.add_argument("--pin", action="store_true",
+                        help="mark the last history entry as pinned (protected from --clear-history)")
+    parser.add_argument("--unpin", action="store_true",
+                        help="remove the pin from the last history entry")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -2790,6 +2987,37 @@ def main() -> None:
 
     if args.explain_env:
         explain_env_var(args.explain_env, model=args.model, copy=args.copy or False)
+        return
+
+    if args.explain_sql:
+        explain_sql(args.explain_sql, model=args.model, copy=args.copy or False, show_tokens=args.tokens)
+        return
+
+    if args.list_named:
+        list_named()
+        return
+
+    if args.run:
+        run_command(
+            args.run,
+            model=args.model,
+            brief=args.brief or False,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
+        return
+
+    if args.delete_profile:
+        delete_profile(args.delete_profile)
+        return
+
+    if args.pin:
+        pin_entry(True)
+        return
+
+    if args.unpin:
+        pin_entry(False)
         return
 
     if args.open:
