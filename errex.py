@@ -111,15 +111,82 @@ function errex-last() {
 """
 
 
+CONFIG_DEFAULTS: dict = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
+CONFIG_TYPES: dict = {"model": str, "brief": bool, "lang": str, "copy": bool}
+
+
 def load_config() -> dict:
-    defaults = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
-                return {**defaults, **json.load(f)}
+                return {**CONFIG_DEFAULTS, **json.load(f)}
         except (json.JSONDecodeError, OSError):
             pass
-    return defaults
+    return dict(CONFIG_DEFAULTS)
+
+
+def manage_config(assignment: str | None) -> None:
+    """View or set a config value in ~/.errexrc."""
+    file_config: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                file_config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if assignment is None:
+        console.rule("[bold cyan]errex — Config[/bold cyan]")
+        console.print(f"[dim]{CONFIG_FILE}[/dim]\n")
+        table = Table(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+        table.add_column("Key", style="cyan", min_width=8)
+        table.add_column("Value", min_width=20)
+        table.add_column("Source", style="dim")
+        for key, default in CONFIG_DEFAULTS.items():
+            if key in file_config:
+                table.add_row(key, str(file_config[key]), "~/.errexrc")
+            else:
+                table.add_row(key, str(default), "default")
+        console.print(table)
+        console.print(f"\n[dim]Set a value:   errex --config model=claude-opus-4-7[/dim]")
+        console.print(f"[dim]Clear a value: errex --config lang=null[/dim]")
+        return
+
+    if "=" not in assignment:
+        err_console.print(f"[red]errex: expected key=value, got: {assignment!r}[/red]")
+        err_console.print(f"[dim]Valid keys: {', '.join(CONFIG_DEFAULTS)}[/dim]")
+        sys.exit(1)
+
+    key, _, raw = assignment.partition("=")
+    key, raw = key.strip(), raw.strip()
+
+    if key not in CONFIG_TYPES:
+        err_console.print(f"[red]errex: unknown config key '{key}'[/red]")
+        err_console.print(f"[dim]Valid keys: {', '.join(CONFIG_DEFAULTS)}[/dim]")
+        sys.exit(1)
+
+    if raw.lower() == "null":
+        file_config.pop(key, None)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(file_config, f, indent=2)
+        console.print(f"[green]Cleared[/green] [cyan]{key}[/cyan]  [dim](reset to default: {CONFIG_DEFAULTS[key]})[/dim]")
+        return
+
+    if CONFIG_TYPES[key] is bool:
+        if raw.lower() in ("true", "1", "yes"):
+            value: bool | str = True
+        elif raw.lower() in ("false", "0", "no"):
+            value = False
+        else:
+            err_console.print(f"[red]errex: '{key}' expects true/false, got: {raw!r}[/red]")
+            sys.exit(1)
+    else:
+        value = raw
+
+    file_config[key] = value
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(file_config, f, indent=2)
+    console.print(f"[green]Set[/green] [cyan]{key}[/cyan] = [bold]{value}[/bold]  [dim]({CONFIG_FILE})[/dim]")
 
 
 def read_file(path: str) -> str:
@@ -326,6 +393,102 @@ def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_
     save_history(diff_text[:200], response, model, False)
     if copy:
         copy_to_clipboard(response)
+
+
+def find_similar(error_text: str, top_n: int = 5) -> None:
+    """Search history for past errors similar to the current one."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    current_fp = _error_fingerprint(error_text)
+    current_words = set(current_fp.lower().split())
+
+    def jaccard(entry: dict) -> float:
+        fp = _error_fingerprint(entry.get("error", ""))
+        words = set(fp.lower().split())
+        if not current_words or not words:
+            return 0.0
+        return len(current_words & words) / len(current_words | words)
+
+    scored = sorted(((jaccard(e), e) for e in entries), reverse=True, key=lambda x: x[0])
+    top = [(s, e) for s, e in scored if s > 0.0][:top_n]
+
+    if not top:
+        console.print("[yellow]No similar errors found in history.[/yellow]")
+        return
+
+    console.rule("[bold cyan]errex — Similar Past Errors[/bold cyan]")
+    console.print(f"[dim]Matched {len(top)} result(s) from history[/dim]\n")
+    for score, entry in top:
+        label = f"  {entry['timestamp'][:19]}  ·  {entry['model']}  ·  {score:.0%} match"
+        console.rule(label, style="dim")
+        console.print(f"[bold red]Error:[/bold red] {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}\n")
+        console.print(Markdown(entry["explanation"]))
+        console.print()
+
+
+def clear_history(before_days: int | None) -> None:
+    """Delete all or old history entries with a confirmation prompt."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history to clear.[/yellow]")
+        return
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is already empty.[/yellow]")
+        return
+
+    if before_days is not None:
+        cutoff = datetime.now().timestamp() - before_days * 86400
+        to_keep, to_delete = [], []
+        for e in entries:
+            try:
+                ts = datetime.fromisoformat(e["timestamp"]).timestamp()
+                (to_delete if ts < cutoff else to_keep).append(e)
+            except (KeyError, ValueError):
+                to_keep.append(e)
+
+        if not to_delete:
+            console.print(f"[yellow]No entries older than {before_days} days.[/yellow]")
+            return
+
+        s = "y" if len(to_delete) == 1 else "ies"
+        console.print(f"This will delete [bold]{len(to_delete)}[/bold] entr{s} older than {before_days} days. [dim]({len(to_keep)} will remain)[/dim]")
+        try:
+            ans = input("Proceed? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            for e in to_keep:
+                f.write(json.dumps(e) + "\n")
+        console.print(f"[green]Deleted {len(to_delete)} old entr{s}.[/green]")
+    else:
+        s = "y" if len(entries) == 1 else "ies"
+        console.print(f"This will permanently delete [bold]all {len(entries)}[/bold] history entr{s}.")
+        try:
+            ans = input("Proceed? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            console.print("\n[dim]Cancelled.[/dim]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/dim]")
+            return
+        HISTORY_FILE.unlink()
+        console.print(f"[green]Cleared {len(entries)} history entr{s}.[/green]")
 
 
 def export_history(output_path: str, fmt: str) -> None:
@@ -1113,8 +1276,21 @@ def main() -> None:
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
     parser.add_argument("--explain-diff", metavar="FILE", dest="explain_diff", nargs="?", const="-", help="explain a git diff (pass a .diff/.patch file, or pipe: git diff | errex --explain-diff)")
+    parser.add_argument("--similar", action="store_true", help="find past errors in your history that are similar to the current one")
+    parser.add_argument("--config", nargs="?", const=None, metavar="KEY=VALUE", help="view or set config (e.g. --config model=claude-opus-4-7); omit value to show all settings")
+    parser.add_argument("--clear-history", nargs="?", const=0, type=int, metavar="DAYS", dest="clear_history",
+                        help="delete history entries (all by default; pass DAYS to only remove entries older than N days)")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if "--config" in sys.argv:
+        manage_config(args.config)
+        return
+
+    if args.clear_history is not None:
+        days = args.clear_history if args.clear_history > 0 else None
+        clear_history(days)
+        return
 
     if args.ask:
         ask_about_last(
@@ -1214,6 +1390,10 @@ def main() -> None:
     if not error_text:
         parser.print_usage(sys.stderr)
         sys.exit(1)
+
+    if args.similar:
+        find_similar(error_text)
+        return
 
     context_text = read_file(args.context) if args.context else None
 
