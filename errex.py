@@ -249,6 +249,17 @@ _CRON_DOW = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat
 _CRON_MONTH = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
                7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
 
+_REDACT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r'sk-ant-[A-Za-z0-9_-]+'), '[ANTHROPIC_KEY]'),
+    (re.compile(r'ghp_[A-Za-z0-9]{20,}'), '[GITHUB_TOKEN]'),
+    (re.compile(r'ghs_[A-Za-z0-9]{20,}'), '[GITHUB_APP_TOKEN]'),
+    (re.compile(r'AKIA[A-Z0-9]{16}'), '[AWS_KEY]'),
+    (re.compile(r'eyJ[A-Za-z0-9._-]{40,}'), '[JWT_TOKEN]'),
+    (re.compile(r'Bearer [A-Za-z0-9._~+/-]+=*', re.IGNORECASE), 'Bearer [REDACTED]'),
+    (re.compile(r'(password|passwd)\s*[=:]\s*\S+', re.IGNORECASE), r'\1=[REDACTED]'),
+    (re.compile(r'(secret|token|api[-_]?key)\s*[=:]\s*\S+', re.IGNORECASE), r'\1=[REDACTED]'),
+]
+
 _STDLIB_RE = re.compile(
     r'(site-packages|dist-packages|/lib/python\d|\\lib\\python\d'
     r'|node_modules|/usr/lib/|\\usr\\lib\\'
@@ -411,7 +422,7 @@ def _parse_since(since: str) -> datetime | None:
         sys.exit(1)
 
 
-def show_history(search: str | None, since: str | None = None) -> None:
+def show_history(search: str | None, since: str | None = None, filter_type: str | None = None) -> None:
     """Print past explanations from the history file."""
     if not HISTORY_FILE.exists():
         console.print("[yellow]No history yet.[/yellow]")
@@ -425,6 +436,14 @@ def show_history(search: str | None, since: str | None = None) -> None:
         entries = [
             e for e in entries
             if datetime.fromisoformat(e["timestamp"]) >= cutoff
+        ]
+
+    if filter_type:
+        ft = filter_type.lower()
+        entries = [
+            e for e in entries
+            if ft in extract_error_type(e.get("error", "")).lower()
+            or ft in e.get("error", "").lower()
         ]
 
     if search:
@@ -498,7 +517,7 @@ def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> 
     console.rule("[bold cyan]errex — Follow-up[/bold cyan]")
     print()
 
-    response, in_tok, out_tok = call_claude(error, model=model, messages=messages)
+    response, in_tok, out_tok, _elapsed = call_claude(error, model=model, messages=messages)
 
     print()
     if show_tokens:
@@ -511,7 +530,7 @@ def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> 
         copy_to_clipboard(response)
 
 
-def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Explain what a git diff changes and what could break."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -526,6 +545,7 @@ def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -547,6 +567,8 @@ def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -1096,7 +1118,7 @@ def get_env_info() -> str:
     return "\n".join(info)
 
 
-def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> None:
+def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Explain a regular expression in plain English."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -1110,6 +1132,7 @@ def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> No
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -1131,6 +1154,8 @@ def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> No
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -1176,7 +1201,7 @@ def explain_exit_code(code: int, model: str, copy: bool) -> None:
         f"which tools or runtimes commonly return it, and how to diagnose or fix the root cause. "
         f"Be concise and use markdown."
     )
-    _, in_tok, out_tok = call_claude(
+    _, in_tok, out_tok, _elapsed = call_claude(
         str(code), model=model,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -1265,8 +1290,8 @@ def call_claude(
     translate: str | None = None,
     dry_run: bool = False,
     top_n: int | None = None,
-) -> tuple[str, int, int]:
-    """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens)."""
+) -> tuple[str, int, int, float]:
+    """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens, elapsed_seconds)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
         sys.exit(1)
@@ -1302,10 +1327,11 @@ def call_claude(
         console.rule("[dim]User prompt[/dim]")
         console.print(messages[-1]["content"])
         console.rule(style="dim")
-        return "", 0, 0
+        return "", 0, 0, 0.0
 
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -1324,7 +1350,7 @@ def call_claude(
         err_console.print(f"\n[red]errex: API error — {e}[/red]")
         sys.exit(2)
 
-    return "".join(collected), input_tokens, output_tokens
+    return "".join(collected), input_tokens, output_tokens, time.time() - t0
 
 
 def chat_loop(error_text: str, initial_response: str, model: str, lang: str | None) -> None:
@@ -1344,7 +1370,7 @@ def chat_loop(error_text: str, initial_response: str, model: str, lang: str | No
             print()
             console.rule("[dim]errex[/dim]")
             print()
-            response, in_tok, out_tok = call_claude(
+            response, in_tok, out_tok, _elapsed = call_claude(
                 error_text, model=model, lang=lang, messages=history
             )
             history.append({"role": "assistant", "content": response})
@@ -1378,13 +1404,14 @@ def explain_error(
     webhook: str | None = None,
     dry_run: bool = False,
     top_n: int | None = None,
+    perf: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output and not dry_run:
         console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
 
-    response, in_tok, out_tok = call_claude(
+    response, in_tok, out_tok, elapsed = call_claude(
         error_text, model=model, brief=brief, terse=terse, json_output=json_output,
         fix=fix, lang=lang, context=context, translate=translate, dry_run=dry_run,
         top_n=top_n,
@@ -1403,6 +1430,8 @@ def explain_error(
         print()
         if show_tokens:
             show_token_usage(in_tok, out_tok)
+        if perf:
+            show_perf(elapsed, out_tok)
         console.rule(style="dim")
         print()
 
@@ -1548,7 +1577,7 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
             console.print("\n[dim]Stopped watching.[/dim]")
 
 
-def show_recent(n: int, since: str | None = None) -> None:
+def show_recent(n: int, since: str | None = None, filter_type: str | None = None) -> None:
     """Show the N most recent history entries."""
     if not HISTORY_FILE.exists():
         console.print("[yellow]No history yet.[/yellow]")
@@ -1565,6 +1594,14 @@ def show_recent(n: int, since: str | None = None) -> None:
         cutoff = _parse_since(since)
         entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) >= cutoff]
 
+    if filter_type:
+        ft = filter_type.lower()
+        entries = [
+            e for e in entries
+            if ft in extract_error_type(e.get("error", "")).lower()
+            or ft in e.get("error", "").lower()
+        ]
+
     recent = entries[-n:]
     label = f"Last {len(recent)} explanation{'s' if len(recent) != 1 else ''}"
     console.rule(f"[bold cyan]errex — {label}[/bold cyan]")
@@ -1578,7 +1615,7 @@ def show_recent(n: int, since: str | None = None) -> None:
         console.print()
 
 
-def summarize_log(path: str, model: str, copy: bool, show_tokens: bool) -> None:
+def summarize_log(path: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Produce a digest of all distinct errors in a log file."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -1597,6 +1634,7 @@ def summarize_log(path: str, model: str, copy: bool, show_tokens: bool) -> None:
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -1618,6 +1656,8 @@ def summarize_log(path: str, model: str, copy: bool, show_tokens: bool) -> None:
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -2321,6 +2361,7 @@ def print_completion(shell: str) -> None:
         "--test-gen", "--translate", "--save-as", "--grep", "--doctor",
         "--completion", "--version", "--help",
         "--explain-sql", "--list-named", "--run", "--delete-profile", "--pin", "--unpin",
+        "--redact", "--explain-yaml", "--filter", "--export-csv", "--perf",
     ]
     models = ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"]
 
@@ -2412,6 +2453,15 @@ def grep_and_explain(
     )
 
 
+YAML_PROMPT = """You are a senior DevOps and infrastructure engineer. When given a YAML configuration file, explain it clearly:
+
+1. **What it is** — identify the type (Docker Compose, Kubernetes manifest, GitHub Actions workflow, Ansible playbook, etc.) and its overall purpose
+2. **How it works** — walk through the key sections and what each one does
+3. **Important settings** — highlight non-obvious configuration choices and their implications (ports, volumes, resource limits, triggers, secrets, etc.)
+4. **Gotchas** — common mistakes, security concerns, or subtle behaviours specific to this config type
+
+Use markdown. Be concise but complete. If you spot a potential misconfiguration or security issue, call it out explicitly."""
+
 SQL_PROMPT = """You are a senior database engineer and SQL expert. When given a SQL query, explain it clearly:
 
 1. **What it does** — plain-English summary of the query's purpose (one sentence)
@@ -2434,7 +2484,7 @@ Rules:
 Output as a fenced code block with the appropriate language tag."""
 
 
-def generate_test(code_path: str, error_text: str | None, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+def generate_test(code_path: str, error_text: str | None, model: str, lang: str | None, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Generate a test case from a code file, optionally reproducing an error."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -2458,6 +2508,7 @@ def generate_test(code_path: str, error_text: str | None, model: str, lang: str 
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -2479,6 +2530,8 @@ def generate_test(code_path: str, error_text: str | None, model: str, lang: str 
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -2487,7 +2540,7 @@ def generate_test(code_path: str, error_text: str | None, model: str, lang: str 
         copy_to_clipboard(response)
 
 
-def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Scan a code file for potential bugs and issues."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -2503,6 +2556,7 @@ def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: 
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -2524,6 +2578,8 @@ def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: 
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -2532,7 +2588,7 @@ def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: 
         copy_to_clipboard(response)
 
 
-def explain_code(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool, chat: bool) -> None:
+def explain_code(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool, chat: bool, perf: bool = False) -> None:
     """Explain what a piece of code does."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -2548,6 +2604,7 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -2569,6 +2626,8 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -2581,7 +2640,7 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
         chat_loop(code, response, model, lang)
 
 
-def explain_sql(query: str, model: str, copy: bool, show_tokens: bool) -> None:
+def explain_sql(query: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Explain a SQL query in plain English."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
@@ -2595,6 +2654,7 @@ def explain_sql(query: str, model: str, copy: bool, show_tokens: bool) -> None:
     client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
+    t0 = time.time()
     try:
         with client.messages.stream(
             model=model,
@@ -2616,6 +2676,8 @@ def explain_sql(query: str, model: str, copy: bool, show_tokens: bool) -> None:
     print()
     if show_tokens:
         show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
     console.rule(style="dim")
     print()
 
@@ -2741,6 +2803,115 @@ def pin_entry(pin: bool) -> None:
         console.print(f"[green]Pinned[/green] [dim](protected from --clear-history)[/dim]  [dim]{err_snippet}[/dim]")
     else:
         console.print(f"[dim]Unpinned[/dim]  [dim]{err_snippet}[/dim]")
+
+
+def show_perf(elapsed: float, output_tokens: int) -> None:
+    tps = output_tokens / elapsed if elapsed > 0 else 0
+    console.print(f"[dim]perf: {elapsed:.2f}s · {tps:.0f} tok/s[/dim]")
+
+
+def redact_secrets(text: str) -> tuple[str, int]:
+    """Strip common secret patterns from text. Returns (redacted_text, count_replaced)."""
+    count = 0
+    for pattern, replacement in _REDACT_PATTERNS:
+        new_text, n = pattern.subn(replacement, text)
+        text = new_text
+        count += n
+    return text, count
+
+
+def _detect_yaml_type(content: str) -> str:
+    if re.search(r'^services\s*:', content, re.MULTILINE) and re.search(r'(image|build)\s*:', content):
+        return 'Docker Compose'
+    if re.search(r'^apiVersion\s*:', content, re.MULTILINE) and re.search(r'^kind\s*:', content, re.MULTILINE):
+        return 'Kubernetes'
+    if re.search(r'^(on|jobs)\s*:', content, re.MULTILINE):
+        return 'GitHub Actions'
+    return 'YAML config'
+
+
+def explain_yaml(path: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
+    """Explain a YAML config file in plain English."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    content = read_file(path)
+    yaml_type = _detect_yaml_type(content)
+    prompt = f"This is a {yaml_type} file. Please explain it:\n\n```yaml\n{content}\n```"
+
+    console.rule(f"[bold cyan]errex — YAML: {Path(path).name}[/bold cyan]")
+    console.print(f"[dim]Detected: {yaml_type}[/dim]\n")
+
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
+    collected = []
+    input_tokens = output_tokens = 0
+    t0 = time.time()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": YAML_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(content[:200], response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def export_csv(output_path: str) -> None:
+    """Export history to a CSV file."""
+    import csv
+
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history to export.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    fields = ["timestamp", "model", "error_type", "error", "explanation_length", "rating", "name", "pinned"]
+    out = Path(output_path)
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for e in entries:
+            writer.writerow({
+                "timestamp": e.get("timestamp", "")[:19],
+                "model": e.get("model", ""),
+                "error_type": extract_error_type(e.get("error", "")),
+                "error": e.get("error", "")[:120].replace("\n", " "),
+                "explanation_length": len(e.get("explanation", "")),
+                "rating": e.get("rating", ""),
+                "name": e.get("name", ""),
+                "pinned": e.get("pinned", False),
+            })
+
+    console.print(f"[green]Exported {len(entries)} entries to[/green] [cyan]{out.resolve()}[/cyan]")
+    console.print(f"[dim]Columns: {', '.join(fields)}[/dim]")
 
 
 def main() -> None:
@@ -2886,6 +3057,16 @@ def main() -> None:
                         help="mark the last history entry as pinned (protected from --clear-history)")
     parser.add_argument("--unpin", action="store_true",
                         help="remove the pin from the last history entry")
+    parser.add_argument("--redact", action="store_true",
+                        help="strip API keys, tokens, and passwords from error text before sending to Claude")
+    parser.add_argument("--explain-yaml", metavar="FILE", dest="explain_yaml",
+                        help="explain a YAML config file (auto-detects docker-compose, k8s, GitHub Actions)")
+    parser.add_argument("--filter", metavar="TYPE", dest="filter_type",
+                        help="filter --history/--recent to entries matching an error type (e.g. TypeError, 404)")
+    parser.add_argument("--export-csv", metavar="FILE", dest="export_csv",
+                        help="export history to a CSV file for spreadsheet analysis")
+    parser.add_argument("--perf", action="store_true",
+                        help="show response time and tokens/second after each explanation")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -2926,7 +3107,7 @@ def main() -> None:
         return
 
     if args.recent is not None:
-        show_recent(args.recent, since=args.since)
+        show_recent(args.recent, since=args.since, filter_type=args.filter_type)
         return
 
     if args.summarize_log:
@@ -2935,6 +3116,7 @@ def main() -> None:
             model=args.model,
             copy=args.copy or False,
             show_tokens=args.tokens,
+            perf=args.perf,
         )
         return
 
@@ -2990,7 +3172,7 @@ def main() -> None:
         return
 
     if args.explain_sql:
-        explain_sql(args.explain_sql, model=args.model, copy=args.copy or False, show_tokens=args.tokens)
+        explain_sql(args.explain_sql, model=args.model, copy=args.copy or False, show_tokens=args.tokens, perf=args.perf)
         return
 
     if args.list_named:
@@ -3018,6 +3200,20 @@ def main() -> None:
 
     if args.unpin:
         pin_entry(False)
+        return
+
+    if args.explain_yaml:
+        explain_yaml(
+            args.explain_yaml,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+            perf=args.perf,
+        )
+        return
+
+    if args.export_csv:
+        export_csv(args.export_csv)
         return
 
     if args.open:
@@ -3099,6 +3295,7 @@ def main() -> None:
             lang=args.lang,
             copy=args.copy or False,
             show_tokens=args.tokens,
+            perf=args.perf,
         )
         return
 
@@ -3113,6 +3310,7 @@ def main() -> None:
             lang=args.lang,
             copy=args.copy or False,
             show_tokens=args.tokens,
+            perf=args.perf,
         )
         return
 
@@ -3123,6 +3321,7 @@ def main() -> None:
             lang=args.lang,
             copy=args.copy or False,
             show_tokens=args.tokens,
+            perf=args.perf,
         )
         return
 
@@ -3134,6 +3333,7 @@ def main() -> None:
             copy=args.copy or False,
             show_tokens=args.tokens,
             chat=args.chat,
+            perf=args.perf,
         )
         return
 
@@ -3142,7 +3342,7 @@ def main() -> None:
         return
 
     if args.history is not None:
-        show_history(args.history or None, since=args.since)
+        show_history(args.history or None, since=args.since, filter_type=args.filter_type)
         return
 
     if args.explain_regex:
@@ -3151,6 +3351,7 @@ def main() -> None:
             model=args.model,
             copy=args.copy or False,
             show_tokens=args.tokens,
+            perf=args.perf,
         )
         return
 
@@ -3192,6 +3393,11 @@ def main() -> None:
             err_console.print(f"[dim](snippet: {n_orig} → {n_trim} lines after stripping library frames)[/dim]")
         error_text = trimmed
 
+    if args.redact:
+        error_text, n_redacted = redact_secrets(error_text)
+        if n_redacted:
+            err_console.print(f"[dim](redacted {n_redacted} secret pattern{'s' if n_redacted != 1 else ''})[/dim]")
+
     if args.ci and os.environ.get("GITHUB_ACTIONS"):
         first_line = error_text.splitlines()[0][:200] if error_text else "error"
         print(f"::error::{first_line}")
@@ -3217,6 +3423,7 @@ def main() -> None:
         webhook=args.webhook,
         dry_run=args.debug,
         top_n=args.top,
+        perf=args.perf,
     )
 
     if args.ci:
