@@ -29,6 +29,7 @@ from pathlib import Path
 import re
 import urllib.request
 import urllib.error
+import urllib.parse
 import importlib.metadata
 from collections import Counter
 
@@ -454,6 +455,62 @@ def install_shell() -> None:
     console.print("[dim]Then use: errex-last  (after any failed command)[/dim]")
 
 
+def search_github_issues(error_text: str) -> None:
+    """Search GitHub for issues similar to this error and print the top results."""
+    # Extract a concise search query from the first meaningful error line
+    lines = [l.strip() for l in error_text.splitlines() if l.strip()]
+    # Prefer lines that look like error messages
+    query_line = next(
+        (l for l in lines if re.search(r'\b(Error|Exception|panic|fatal|fail)\b', l, re.I)),
+        lines[0] if lines else error_text[:100],
+    )
+    # Trim to a reasonable search length and strip file paths/line numbers
+    query = re.sub(r'File ".*?", line \d+,?\s*', '', query_line)
+    query = query[:120].strip()
+
+    console.print(f"\n[bold]Searching GitHub Issues for:[/bold] [dim]{query}[/dim]\n")
+
+    try:
+        encoded = urllib.parse.quote(query)
+        url = f"https://api.github.com/search/issues?q={encoded}+is:issue&sort=relevance&per_page=5"
+        req = urllib.request.Request(url, headers={"User-Agent": "errex", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+    except Exception as e:
+        console.print(f"[yellow]Could not search GitHub: {e}[/yellow]")
+        return
+
+    items = data.get("items", [])
+    if not items:
+        console.print("[dim]No matching GitHub issues found.[/dim]")
+        return
+
+    from rich.table import Table as RTable
+    table = RTable(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+    table.add_column("", style="dim", width=2)
+    table.add_column("Title", style="cyan", max_width=55)
+    table.add_column("Repo", style="dim", max_width=30)
+    table.add_column("State", width=6)
+    table.add_column("👍", justify="right", width=4)
+
+    for i, item in enumerate(items, 1):
+        repo = item["repository_url"].replace("https://api.github.com/repos/", "")
+        state_color = "green" if item["state"] == "open" else "red"
+        table.add_row(
+            str(i),
+            item["title"][:55],
+            repo,
+            f"[{state_color}]{item['state']}[/{state_color}]",
+            str(item.get("reactions", {}).get("+1", 0)),
+        )
+
+    console.print(table)
+    console.print()
+    for i, item in enumerate(items, 1):
+        console.print(f"  [dim]{i}.[/dim] [cyan]{item['html_url']}[/cyan]")
+    console.print()
+
+
 def notify(title: str, message: str) -> None:
     """Send a macOS desktop notification (no-op on other platforms)."""
     if platform.system() != "Darwin":
@@ -596,6 +653,7 @@ def explain_error(
     chat: bool = False,
     context: str | None = None,
     do_notify: bool = False,
+    issues: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
@@ -630,6 +688,9 @@ def explain_error(
 
     if do_notify:
         notify("errex", f"Error explained: {error_text[:60]}")
+
+    if issues:
+        search_github_issues(error_text)
 
     if chat and sys.stdin.isatty():
         chat_loop(error_text, response, model, lang)
@@ -803,6 +864,7 @@ def main() -> None:
     parser.add_argument("--notify", action="store_true", help="send a desktop notification when the explanation is ready")
     parser.add_argument("--update", action="store_true", help="check for a newer version of errex")
     parser.add_argument("--explain-code", metavar="FILE", dest="explain_code", help="explain what a piece of code does")
+    parser.add_argument("--issues", action="store_true", help="search GitHub Issues for similar errors after explaining")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -875,6 +937,7 @@ def main() -> None:
         chat=args.chat,
         context=context_text,
         do_notify=args.notify,
+        issues=args.issues,
     )
 
     check_for_update()
