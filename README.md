@@ -17,11 +17,11 @@ This is a Python type error...
 ## Install
 
 ```bash
-pip install git+https://github.com/Bsel153/errex.git
+pip install errex
 export ANTHROPIC_API_KEY=sk-...
 ```
 
-Requires Python 3.8+ and an [Anthropic API key](https://console.anthropic.com/).
+Requires Python 3.9+ and an [Anthropic API key](https://console.anthropic.com/).
 
 ## Usage
 
@@ -34,7 +34,12 @@ errex traceback.txt
 
 # Pipe from another command
 cat error.log | errex
-errex < error.log
+
+# Watch a log file and auto-explain errors as they appear
+errex --watch server.log
+
+# Get just the fix command, no explanation
+errex --fix traceback.txt
 
 # One-paragraph summary instead of full analysis
 errex --brief traceback.txt
@@ -55,6 +60,25 @@ errex --model claude-opus-4-7 traceback.txt
 errex --history
 errex --history "KeyError"
 ```
+
+## Shell integration
+
+Run `errex --install-shell` to add an `errex-last` function to your shell config.
+After any failed command, just run `errex-last` to explain why it failed.
+
+## Config file
+
+Create `~/.errexrc` to set your defaults (all fields optional):
+
+```json
+{
+  "model": "claude-opus-4-7",
+  "brief": false,
+  "lang": "python"
+}
+```
+
+CLI flags always override the config file.
 
 Past explanations are saved to `~/.errex_history` (one JSON object per line).
 
