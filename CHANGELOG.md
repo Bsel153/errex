@@ -2,6 +2,15 @@
 
 All notable changes to errex are documented here.
 
+## [0.11.0] — 2026-05-28
+### Added
+- `--output FILE`: save the explanation to a `.txt` or `.md` file alongside printing
+- `--terse`: single-sentence diagnosis, faster than `--brief`, ideal for scripting
+- `--no-color`: strip all rich formatting for safe piping to `grep`, `less`, etc.
+- `--since YYYY-MM-DD`: filter `--history` and `--recent` to entries on or after a date
+- `--env`: auto-attach system info (OS, Python, shell, runtimes) as context; Windows-aware (detects PowerShell vs cmd)
+- `--explain-regex PATTERN`: explain what a regex matches — breakdown table, examples, gotchas
+
 ## [0.10.0] — 2026-05-28
 ### Added
 - `--doctor`: health check — verifies API key, live API connectivity, config validity, history, and PyPI version
