@@ -38,6 +38,9 @@ errex < error.log
 
 # Use a different Claude model
 errex --model claude-opus-4-7 traceback.txt
+
+# One-paragraph summary instead of full analysis
+errex --brief traceback.txt
 ```
 
 ## What you get
