@@ -2,6 +2,15 @@
 
 All notable changes to errex are documented here.
 
+## [0.8.0] — 2026-05-28
+### Added
+- `--similar`: search your own history for past errors similar to the current one (Jaccard similarity on error fingerprints)
+- `--ask "question"`: ask a follow-up about the last error in history without re-explaining it
+- `--test-gen FILE`: generate a pytest/jest/go test case from a code file; pipe an error to make it reproduce the bug
+- `--explain-diff`: explain a git diff — pipe `git diff | errex --explain-diff` or pass a .patch file
+- `--config [key=value]`: view or edit `~/.errexrc` from the CLI; `--config lang=null` clears a value
+- `--clear-history [DAYS]`: delete all history or only entries older than N days, with confirmation
+
 ## [0.7.0] — 2026-05-28
 ### Added
 - `--explain-code FILE`: paste a code file and get a plain-English walkthrough
