@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Debuggers",
 ]
-dependencies = ["anthropic"]
+dependencies = ["anthropic", "rich"]
 
 [project.urls]
 Repository = "https://github.com/Bsel153/errex"
