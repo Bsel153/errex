@@ -256,7 +256,7 @@ def copy_to_clipboard(text: str) -> None:
         err_console.print("[yellow]errex: could not copy to clipboard[/yellow]")
 
 
-def save_history(error_text: str, explanation: str, model: str, brief: bool) -> None:
+def save_history(error_text: str, explanation: str, model: str, brief: bool, name: str | None = None) -> None:
     entry = {
         "timestamp": datetime.now().isoformat(),
         "model": model,
@@ -264,6 +264,8 @@ def save_history(error_text: str, explanation: str, model: str, brief: bool) -> 
         "error": error_text[:200],
         "explanation": explanation,
     }
+    if name:
+        entry["name"] = name
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
 
@@ -908,6 +910,7 @@ def call_claude(
     lang: str | None = None,
     context: str | None = None,
     messages: list | None = None,
+    translate: str | None = None,
 ) -> tuple[str, int, int]:
     """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -917,10 +920,11 @@ def call_claude(
     client = anthropic.Anthropic()
     lang_hint = f" (language: {lang})" if lang else ""
     context_block = f"\n\nFor context, here is the relevant code:\n```\n{context}\n```" if context else ""
+    translate_suffix = f"\n\nRespond entirely in {translate}." if translate else ""
 
     if messages is None:
         if fix:
-            prompt = f"Given this error{lang_hint}, output ONLY the exact shell command(s) to fix it as a code block. No explanation.\n\n```\n{error_text}\n```{context_block}"
+            prompt = f"Given this error{lang_hint}, output ONLY the exact shell command(s) to fix it as a code block. No explanation.\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         elif json_output:
             prompt = (
                 f"Explain this error{lang_hint} as JSON with keys: error_type, language, "
@@ -928,9 +932,9 @@ def call_claude(
                 f"Return only valid JSON, no markdown fences.\n\n```\n{error_text}\n```{context_block}"
             )
         elif brief:
-            prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```{context_block}"
+            prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         else:
-            prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}"
+            prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         messages = [{"role": "user", "content": prompt}]
 
     collected = []
@@ -1000,6 +1004,8 @@ def explain_error(
     context: str | None = None,
     do_notify: bool = False,
     issues: bool = False,
+    translate: str | None = None,
+    save_as: str | None = None,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
@@ -1008,7 +1014,7 @@ def explain_error(
 
     response, in_tok, out_tok = call_claude(
         error_text, model=model, brief=brief, json_output=json_output,
-        fix=fix, lang=lang, context=context,
+        fix=fix, lang=lang, context=context, translate=translate,
     )
 
     if json_output:
@@ -1024,7 +1030,7 @@ def explain_error(
         console.rule(style="dim")
         print()
 
-    save_history(error_text, response, model, brief)
+    save_history(error_text, response, model, brief, name=save_as)
 
     if copy:
         copy_to_clipboard(response)
@@ -1271,6 +1277,247 @@ def retry_last(
     )
 
 
+def run_doctor() -> None:
+    """Check that errex is set up and working correctly."""
+    console.rule("[bold cyan]errex — Doctor[/bold cyan]")
+    console.print()
+    ok = True
+
+    # 1. API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if api_key:
+        console.print(f"[green]✓[/green] ANTHROPIC_API_KEY is set ({api_key[:8]}…)")
+    else:
+        console.print("[red]✗[/red] ANTHROPIC_API_KEY is not set")
+        console.print("  [dim]Get one at https://console.anthropic.com/[/dim]")
+        ok = False
+
+    # 2. Live API ping
+    if api_key:
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            console.print("[green]✓[/green] Anthropic API reachable")
+        except Exception as e:
+            console.print(f"[red]✗[/red] Anthropic API error: {e}")
+            ok = False
+
+    # 3. Config file
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                cfg = json.load(f)
+            console.print(f"[green]✓[/green] Config file OK ({CONFIG_FILE})")
+        except json.JSONDecodeError as e:
+            console.print(f"[red]✗[/red] Config file has invalid JSON: {e}")
+            ok = False
+    else:
+        console.print(f"[dim]–[/dim] No config file (using defaults) — run [cyan]errex --setup[/cyan] to create one")
+
+    # 4. History file
+    if HISTORY_FILE.exists():
+        with open(HISTORY_FILE) as f:
+            count = sum(1 for line in f if line.strip())
+        console.print(f"[green]✓[/green] History file OK ({count} entries at {HISTORY_FILE})")
+    else:
+        console.print("[dim]–[/dim] No history file yet (created on first use)")
+
+    # 5. Version check
+    try:
+        current = importlib.metadata.version("errex")
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/errex/json",
+            headers={"User-Agent": f"errex/{current}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            latest = json.loads(resp.read())["info"]["version"]
+        if latest == current:
+            console.print(f"[green]✓[/green] errex {current} is up to date")
+        else:
+            console.print(f"[yellow]![/yellow] errex {current} → {latest} available ([dim]pip install --upgrade errex[/dim])")
+    except Exception:
+        console.print("[dim]–[/dim] Could not check PyPI for updates")
+
+    console.print()
+    if ok:
+        console.rule("[green]All checks passed[/green]")
+    else:
+        console.rule("[red]Some checks failed — see above[/red]")
+        sys.exit(1)
+
+
+def print_completion(shell: str) -> None:
+    """Print a shell completion script for errex."""
+    flags = [
+        "--model", "--brief", "--lang", "--copy", "--json", "--fix",
+        "--watch", "--history", "--install-shell", "--stats", "--share",
+        "--web", "--scan", "--setup", "--context", "--chat", "--tokens",
+        "--notify", "--update", "--explain-code", "--issues", "--lint",
+        "--export", "--export-format", "--ask", "--explain-diff", "--similar",
+        "--config", "--clear-history", "--recent", "--summarize-log", "--retry",
+        "--test-gen", "--translate", "--save-as", "--grep", "--doctor",
+        "--completion", "--version", "--help",
+    ]
+    models = ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"]
+
+    if shell == "bash":
+        flags_str = " ".join(flags)
+        models_str = " ".join(models)
+        script = f"""# errex bash completion — add to ~/.bashrc:
+# source <(errex --completion bash)
+
+_errex_complete() {{
+    local cur prev
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+
+    case "$prev" in
+        --model) COMPREPLY=($(compgen -W "{models_str}" -- "$cur")); return ;;
+        --export-format) COMPREPLY=($(compgen -W "html md" -- "$cur")); return ;;
+        --completion) COMPREPLY=($(compgen -W "bash zsh" -- "$cur")); return ;;
+        --watch|--lint|--explain-code|--test-gen|--summarize-log|--grep|\\
+        --context|--explain-diff|--export) COMPREPLY=($(compgen -f -- "$cur")); return ;;
+    esac
+
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "{flags_str}" -- "$cur"))
+    else
+        COMPREPLY=($(compgen -f -- "$cur"))
+    fi
+}}
+
+complete -F _errex_complete errex
+"""
+    elif shell == "zsh":
+        flag_args = "\n    ".join(f"'{f}'" for f in flags)
+        script = f"""#compdef errex
+# errex zsh completion — add to ~/.zshrc:
+# source <(errex --completion zsh)
+
+_errex() {{
+    local -a flags
+    flags=(
+    {flag_args}
+    )
+    _arguments \\
+        '*:file:_files' \\
+        '--model[Claude model]:model:({" ".join(models)})' \\
+        '--export-format[export format]:format:(html md)' \\
+        '--completion[shell]:shell:(bash zsh)' \\
+        ${{flags[@]}}
+}}
+
+_errex
+"""
+    else:
+        err_console.print(f"[red]errex: unknown shell '{shell}'. Use bash or zsh.[/red]")
+        sys.exit(1)
+
+    print(script.strip())
+
+
+def grep_and_explain(
+    pattern: str,
+    path: str,
+    model: str,
+    lang: str | None,
+    copy: bool,
+    show_tokens: bool,
+) -> None:
+    """Filter a log file by pattern and explain the matching error lines."""
+    content = read_file(path)
+    try:
+        rx = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        err_console.print(f"[red]errex: invalid pattern '{pattern}': {e}[/red]")
+        sys.exit(1)
+
+    matched = [line for line in content.splitlines() if rx.search(line)]
+    if not matched:
+        console.print(f"[yellow]No lines matching '{pattern}' in {path}.[/yellow]")
+        sys.exit(0)
+
+    excerpt = "\n".join(matched[:200])  # cap at 200 lines
+    console.print(f"[dim]Found {len(matched)} matching line(s) — explaining…[/dim]\n")
+    explain_error(
+        excerpt,
+        model=model,
+        lang=lang,
+        copy=copy,
+        show_tokens=show_tokens,
+    )
+
+
+TEST_GEN_PROMPT = """You are a senior software engineer. Given a code file (and optionally an error that occurs when running it), generate a minimal, runnable test case.
+
+Rules:
+- Use the natural test framework for the language: pytest for Python, Jest for JS/TS, `go test` for Go, etc.
+- If an error is provided, the test should reproduce the exact failure
+- If no error is provided, write tests for the key functions/behaviours in the file
+- Keep the test self-contained — include any necessary imports and fixtures
+- Add a one-line comment above each test explaining what it covers
+- Output only the test file content, no explanation
+
+Output as a fenced code block with the appropriate language tag."""
+
+
+def generate_test(code_path: str, error_text: str | None, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Generate a test case from a code file, optionally reproducing an error."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    code = read_file(code_path)
+    lang_hint = f" (language: {lang})" if lang else ""
+
+    if error_text:
+        prompt = (
+            f"Here is a code file{lang_hint}:\n\n```\n{code}\n```\n\n"
+            f"When run, it produces this error:\n\n```\n{error_text}\n```\n\n"
+            f"Generate a test case that reproduces this error."
+        )
+    else:
+        prompt = f"Here is a code file{lang_hint}:\n\n```\n{code}\n```\n\nGenerate a test suite for the key behaviours."
+
+    console.rule(f"[bold cyan]errex — Test Gen: {Path(code_path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": TEST_GEN_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(code[:200], response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
 def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
     """Scan a code file for potential bugs and issues."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1415,6 +1662,18 @@ def main() -> None:
                         help="produce a diagnostic digest of all distinct errors in a log file")
     parser.add_argument("--retry", action="store_true",
                         help="re-explain the last error from history (combine with --model, --brief, etc.)")
+    parser.add_argument("--test-gen", metavar="FILE", dest="test_gen",
+                        help="generate a test case for a code file; pipe an error to reproduce it")
+    parser.add_argument("--doctor", action="store_true",
+                        help="check that errex is set up correctly (API key, config, connectivity)")
+    parser.add_argument("--completion", metavar="SHELL", choices=["bash", "zsh"],
+                        help="print a shell completion script (bash or zsh)")
+    parser.add_argument("--translate", metavar="LANG",
+                        help="translate the explanation into a spoken language (e.g. Spanish, French, Japanese)")
+    parser.add_argument("--save-as", metavar="NAME", dest="save_as",
+                        help="save this explanation with a memorable name for quick retrieval")
+    parser.add_argument("--grep", nargs=2, metavar=("PATTERN", "FILE"),
+                        help="filter a log file by regex pattern, then explain matching lines")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -1449,6 +1708,25 @@ def main() -> None:
             copy=args.copy or False,
             show_tokens=args.tokens,
             chat=args.chat,
+        )
+        return
+
+    if args.doctor:
+        run_doctor()
+        return
+
+    if args.completion:
+        print_completion(args.completion)
+        return
+
+    if args.grep:
+        grep_and_explain(
+            args.grep[0],
+            args.grep[1],
+            model=args.model,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
         )
         return
 
@@ -1501,6 +1779,20 @@ def main() -> None:
             sys.exit(1)
         explain_diff(
             diff_text,
+            model=args.model,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
+        return
+
+    if args.test_gen:
+        error_text_for_test = None
+        if not sys.stdin.isatty():
+            error_text_for_test = sys.stdin.read().strip() or None
+        generate_test(
+            args.test_gen,
+            error_text=error_text_for_test,
             model=args.model,
             lang=args.lang,
             copy=args.copy or False,
@@ -1571,6 +1863,8 @@ def main() -> None:
         context=context_text,
         do_notify=args.notify,
         issues=args.issues,
+        translate=args.translate,
+        save_as=args.save_as,
     )
 
     check_for_update()
