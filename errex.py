@@ -2362,6 +2362,7 @@ def print_completion(shell: str) -> None:
         "--completion", "--version", "--help",
         "--explain-sql", "--list-named", "--run", "--delete-profile", "--pin", "--unpin",
         "--redact", "--explain-yaml", "--filter", "--export-csv", "--perf",
+        "--explain-dockerfile", "--search", "--inline", "--dedup", "--last",
     ]
     models = ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"]
 
@@ -2452,6 +2453,25 @@ def grep_and_explain(
         show_tokens=show_tokens,
     )
 
+
+DOCKERFILE_PROMPT = """You are a senior DevOps engineer who specializes in containerization. When given a Dockerfile, explain it step by step:
+
+1. **What it builds** — the base image, language/runtime, and what the container is meant to run
+2. **Layer-by-layer walkthrough** — explain each instruction (FROM, RUN, COPY, ADD, ENV, EXPOSE, CMD, ENTRYPOINT, ARG, WORKDIR, USER, VOLUME) in plain English
+3. **Build performance** — flag layer ordering issues, unnecessary cache-busting, missing .dockerignore use, or bloated image size
+4. **Security concerns** — running as root, secrets in ENV/ARG/COPY, exposed ports, privilege escalation risks, use of :latest tags
+5. **Gotchas** — ENTRYPOINT vs CMD, signal handling and PID 1, shell vs exec form, multi-stage builds, and platform-specific quirks
+
+Use markdown. Be concise but complete. Call out any misconfigurations or security issues explicitly."""
+
+INLINE_PROMPT = """You are a senior software engineer. The user has given you a code file with one line marked with ▶. Explain that specific line:
+
+1. **What this line does** — exactly what it executes, assigns, calls, or returns
+2. **Why it's here** — its role in the surrounding logic
+3. **What could go wrong** — edge cases, type errors, null/undefined risks, off-by-one errors, or subtle bugs on this line
+4. **Suggestion** — a cleaner or safer alternative if one exists; skip this section if the line is already good
+
+Use markdown. Be concise. Focus on the marked line; use surrounding context only to inform your answer."""
 
 YAML_PROMPT = """You are a senior DevOps and infrastructure engineer. When given a YAML configuration file, explain it clearly:
 
@@ -2914,6 +2934,263 @@ def export_csv(output_path: str) -> None:
     console.print(f"[dim]Columns: {', '.join(fields)}[/dim]")
 
 
+def explain_dockerfile(path: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
+    """Explain a Dockerfile step by step."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    content = read_file(path)
+    prompt = f"Please explain this Dockerfile:\n\n```dockerfile\n{content}\n```"
+
+    console.rule(f"[bold cyan]errex — Dockerfile: {Path(path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
+    collected = []
+    input_tokens = output_tokens = 0
+    t0 = time.time()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": DOCKERFILE_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(content[:200], response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def search_history(term: str) -> None:
+    """Full-text search across all history fields: error, explanation, name, notes, model."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    t = term.lower()
+
+    def _hit_fields(e: dict) -> list[str]:
+        hits = []
+        for field in ("error", "explanation", "name", "notes"):
+            if t in e.get(field, "").lower():
+                hits.append(field)
+        if t in e.get("model", "").lower():
+            hits.append("model")
+        if t in extract_error_type(e.get("error", "")).lower():
+            hits.append("error_type")
+        return hits
+
+    matches = [(e, _hit_fields(e)) for e in entries]
+    matches = [(e, fields) for e, fields in matches if fields]
+
+    if not matches:
+        console.print(f"[yellow]No history entries matching '{term}'.[/yellow]")
+        sys.exit(0)
+
+    console.rule(f"[bold cyan]errex — Search: {term}[/bold cyan]")
+    console.print(f"[dim]{len(matches)} result{'s' if len(matches) != 1 else ''} across {len(entries)} entries[/dim]\n")
+
+    for entry, fields in matches:
+        ts = entry.get("timestamp", "")[:16]
+        model = entry.get("model", "")
+        error = entry.get("error", "")
+        explanation = entry.get("explanation", "")
+        name = entry.get("name", "")
+        notes = entry.get("notes", "")
+
+        field_tag = ", ".join(fields)
+        console.rule(f"  {ts}  ·  {model}  ·  matched: {field_tag}", style="dim")
+        if name:
+            console.print(f"[dim]Name:[/dim] [cyan]{name}[/cyan]")
+        console.print(f"[bold red]Error:[/bold red] {error[:80]}{'...' if len(error) > 80 else ''}")
+        if notes:
+            console.print(f"[dim]Note:[/dim] {notes[:80]}")
+        console.print()
+        console.print(Markdown(explanation))
+        console.print()
+
+
+def explain_inline(path: str, line_num: int, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
+    """Explain a specific line of a code file in context."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    code = read_file(path)
+    lines = code.splitlines()
+
+    if line_num < 1 or line_num > len(lines):
+        err_console.print(f"[red]errex: line {line_num} is out of range (file has {len(lines)} lines)[/red]")
+        sys.exit(1)
+
+    ctx_start = max(0, line_num - 16)
+    ctx_end = min(len(lines), line_num + 15)
+    ctx_lines = []
+    for i in range(ctx_start, ctx_end):
+        marker = "▶ " if i == line_num - 1 else "  "
+        ctx_lines.append(f"{marker}{i + 1:4d}  {lines[i]}")
+
+    context_block = "\n".join(ctx_lines)
+    prompt = (
+        f"Here is an excerpt from `{Path(path).name}` with line {line_num} marked with ▶:\n\n"
+        f"```\n{context_block}\n```\n\n"
+        f"Please explain line {line_num}."
+    )
+
+    console.rule(f"[bold cyan]errex — Inline: {Path(path).name}:{line_num}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
+    collected = []
+    input_tokens = output_tokens = 0
+    t0 = time.time()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=[{"type": "text", "text": INLINE_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    if perf:
+        show_perf(time.time() - t0, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(f"{path}:{line_num} — {lines[line_num - 1].strip()[:100]}", response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def dedup_history() -> None:
+    """Scan history and group near-duplicate errors into clusters."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    groups: dict[str, list[dict]] = {}
+    for e in entries:
+        fp = _error_fingerprint(e.get("error", ""))
+        groups.setdefault(fp, []).append(e)
+
+    dupes = [(fp, members) for fp, members in groups.items() if len(members) > 1]
+    dupes.sort(key=lambda x: len(x[1]), reverse=True)
+
+    unique_count = len(groups)
+    dupe_count = sum(len(m) - 1 for _, m in dupes)
+
+    console.rule("[bold cyan]errex — Dedup Report[/bold cyan]")
+    console.print(
+        f"[dim]{len(entries)} total entries · {unique_count} distinct fingerprints · "
+        f"{dupe_count} duplicate{'s' if dupe_count != 1 else ''}[/dim]\n"
+    )
+
+    if not dupes:
+        console.print("[green]No duplicate errors found — all history entries are unique.[/green]")
+        return
+
+    for _fp, members in dupes:
+        representative = members[-1]
+        ts_first = members[0].get("timestamp", "")[:10]
+        ts_last = members[-1].get("timestamp", "")[:10]
+        error = representative.get("error", "")
+        models_used = sorted(set(m.get("model", "") for m in members))
+        console.print(
+            f"[bold red]{len(members)}×[/bold red]  {error[:70]}{'...' if len(error) > 70 else ''}"
+        )
+        console.print(
+            f"  [dim]first: {ts_first} · last: {ts_last} · models: {', '.join(models_used)}[/dim]"
+        )
+        console.print()
+
+    console.print("[dim]Tip: use [cyan]errex --clear-history DAYS[/cyan] to prune old duplicates.[/dim]")
+
+
+def show_last() -> None:
+    """Print the last history entry without re-running Claude."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    e = entries[-1]
+    ts = e.get("timestamp", "")[:19]
+    model = e.get("model", "")
+    error = e.get("error", "")
+    explanation = e.get("explanation", "")
+    name = e.get("name", "")
+    notes = e.get("notes", "")
+    rating = e.get("rating")
+    pinned = e.get("pinned", False)
+
+    brief_tag = "  · brief" if e.get("brief") else ""
+    name_tag = f"  · [cyan]{name}[/cyan]" if name else ""
+    pin_tag = "  · [yellow]pinned[/yellow]" if pinned else ""
+    console.rule("[bold cyan]errex — Last Explanation[/bold cyan]")
+    console.print(f"[dim]{ts}  ·  {model}{brief_tag}[/dim]{name_tag}{pin_tag}\n")
+    console.print(f"[bold red]Error:[/bold red] {error}\n")
+    if notes:
+        console.print(f"[dim]Note:[/dim] {notes}\n")
+    if rating:
+        stars = "★" * rating + "☆" * (5 - rating)
+        console.print(f"[dim]Rating:[/dim] {stars}\n")
+    console.print(Markdown(explanation))
+    console.rule(style="dim")
+
+
 def main() -> None:
     # Two-pass: detect --profile before full parse so profile defaults can be set
     _pre = argparse.ArgumentParser(add_help=False)
@@ -3067,6 +3344,16 @@ def main() -> None:
                         help="export history to a CSV file for spreadsheet analysis")
     parser.add_argument("--perf", action="store_true",
                         help="show response time and tokens/second after each explanation")
+    parser.add_argument("--explain-dockerfile", metavar="FILE", dest="explain_dockerfile",
+                        help="explain a Dockerfile layer by layer with security and performance notes")
+    parser.add_argument("--search", metavar="TERM",
+                        help="full-text search across all history fields (error, explanation, name, notes)")
+    parser.add_argument("--inline", nargs=2, metavar=("FILE", "LINE"),
+                        help="explain a specific line of a code file in context (e.g. --inline app.py 42)")
+    parser.add_argument("--dedup", action="store_true",
+                        help="scan history and show groups of near-duplicate errors")
+    parser.add_argument("--last", action="store_true",
+                        help="print the last explanation from history without re-running Claude")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -3214,6 +3501,45 @@ def main() -> None:
 
     if args.export_csv:
         export_csv(args.export_csv)
+        return
+
+    if args.explain_dockerfile:
+        explain_dockerfile(
+            args.explain_dockerfile,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+            perf=args.perf,
+        )
+        return
+
+    if args.search:
+        search_history(args.search)
+        return
+
+    if args.inline:
+        path_arg, line_arg = args.inline
+        try:
+            line_num = int(line_arg)
+        except ValueError:
+            err_console.print(f"[red]errex: LINE must be an integer, got: {line_arg!r}[/red]")
+            sys.exit(1)
+        explain_inline(
+            path_arg,
+            line_num,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+            perf=args.perf,
+        )
+        return
+
+    if args.dedup:
+        dedup_history()
+        return
+
+    if args.last:
+        show_last()
         return
 
     if args.open:
