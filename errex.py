@@ -765,19 +765,35 @@ def compare_errors(files: list[str], model: str, lang: str | None, copy: bool) -
         copy_to_clipboard(full_response)
 
 
+def _error_fingerprint(text: str) -> str:
+    """Produce a short dedup key from error text — strips line numbers and addresses."""
+    # Remove memory addresses, line numbers, timestamps, UUIDs
+    cleaned = re.sub(r'0x[0-9a-fA-F]+', '0xADDR', text)
+    cleaned = re.sub(r'\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}[.\d]*\b', '', cleaned)
+    cleaned = re.sub(r'\bline \d+\b', 'line N', cleaned, flags=re.I)
+    cleaned = re.sub(r':[0-9]+\b', ':N', cleaned)
+    cleaned = re.sub(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', 'UUID', cleaned, flags=re.I)
+    # Collapse whitespace and take first 200 chars as fingerprint
+    return re.sub(r'\s+', ' ', cleaned).strip()[:200]
+
+
 def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
-    """Tail a log file and explain errors as they appear."""
+    """Tail a log file and explain errors as they appear, deduplicating repeats."""
     if not os.path.exists(path):
-        console.print(f"[red]errex: file not found: {path}[/red]", file=sys.stderr)
+        err_console.print(f"[red]errex: file not found: {path}[/red]")
         sys.exit(1)
 
-    console.print(f"[bold]Watching[/bold] [cyan]{path}[/cyan] [dim](Ctrl+C to stop)[/dim]")
+    console.print(f"[bold]Watching[/bold] [cyan]{path}[/cyan] [dim](Ctrl+C to stop | duplicates suppressed)[/dim]")
+
+    seen_fingerprints: set[str] = set()
+    COOLDOWN = 30.0  # seconds before re-explaining a similar error
 
     with open(path, encoding="utf-8", errors="replace") as f:
         f.seek(0, 2)
         buffer: list[str] = []
         has_error = False
         last_activity: float | None = None
+        fingerprint_times: dict[str, float] = {}
 
         try:
             while True:
@@ -789,9 +805,18 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
                         has_error = True
                 elif has_error and last_activity and time.time() - last_activity > 2.0:
                     text = "".join(buffer).strip()
-                    console.print("\n[bold yellow]New error detected[/bold yellow]")
-                    notify("errex — error detected", path)
-                    explain_error(text, model=model, brief=brief, lang=lang, do_notify=False)
+                    fp = _error_fingerprint(text)
+                    now = time.time()
+                    last_seen = fingerprint_times.get(fp, 0)
+
+                    if now - last_seen < COOLDOWN:
+                        console.print(f"\n[dim]Duplicate error suppressed (seen {int(now - last_seen)}s ago)[/dim]")
+                    else:
+                        fingerprint_times[fp] = now
+                        console.print("\n[bold yellow]New error detected[/bold yellow]")
+                        notify("errex — error detected", path)
+                        explain_error(text, model=model, brief=brief, lang=lang, do_notify=False)
+
                     buffer = []
                     has_error = False
                     last_activity = None
