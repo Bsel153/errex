@@ -84,6 +84,25 @@ If the code looks clean, say so briefly. Be direct — don't invent issues that 
 
 Output as markdown."""
 
+TEST_GEN_PROMPT = """You are a senior software engineer and testing expert. Given a piece of code and optionally an error or bug, generate a complete, runnable test case that:
+
+1. **Reproduces the bug** — if an error is provided, the test should fail (or demonstrate the problem) before the fix is applied.
+2. **Passes after the fix** — briefly describe what the correct fix would be.
+3. **Is idiomatic** — use the standard test framework for the detected language:
+   - Python → pytest
+   - JavaScript/TypeScript → Jest or Vitest
+   - Go → testing package (go test)
+   - Rust → built-in #[test] / #[cfg(test)]
+   - Java → JUnit 5
+   - Ruby → RSpec or minitest
+4. **Is self-contained** — no external dependencies or complex fixtures unless the code requires them.
+5. **Has clear test names** — test function/method names should describe what they verify.
+
+Output the complete test code in a fenced code block, then briefly explain:
+- What the test verifies
+- How to run it
+- What the expected fix is (if a bug was provided)"""
+
 CODE_PROMPT = """You are a senior software engineer and excellent technical communicator. When given a piece of code, you will:
 
 1. **What it does** — A plain-English summary of the code's purpose (1-2 sentences).
@@ -271,6 +290,69 @@ def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> 
     print()
 
     save_history(error, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def generate_test(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Generate a test case for a code file, optionally incorporating an error from stdin."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    code = read_file(path)
+    lang_hint = f" (language: {lang})" if lang else ""
+
+    # Optionally accept piped error text alongside the code file
+    error_text: str | None = None
+    if not sys.stdin.isatty():
+        error_text = sys.stdin.read().strip() or None
+
+    if error_text:
+        prompt = (
+            f"Here is a piece of code{lang_hint} and an error it produces.\n"
+            f"Generate a test case that reproduces this bug and will pass after the fix.\n\n"
+            f"**Code** (`{Path(path).name}`):\n```\n{code}\n```\n\n"
+            f"**Error:**\n```\n{error_text}\n```"
+        )
+    else:
+        prompt = (
+            f"Here is a piece of code{lang_hint}.\n"
+            f"Generate a comprehensive test suite that covers the main logic and edge cases.\n\n"
+            f"**Code** (`{Path(path).name}`):\n```\n{code}\n```"
+        )
+
+    console.rule(f"[bold cyan]errex — Test Generator: {Path(path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": TEST_GEN_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(code[:200], response, model, False)
     if copy:
         copy_to_clipboard(response)
 
@@ -1059,6 +1141,7 @@ def main() -> None:
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
+    parser.add_argument("--test-gen", metavar="FILE", dest="test_gen", help="generate a test case for a code file (pipe an error to make it reproduce the bug)")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -1095,6 +1178,16 @@ def main() -> None:
     if args.export:
         fmt = args.export_format or ("html" if args.export.endswith(".html") else "md")
         export_history(args.export, fmt)
+        return
+
+    if args.test_gen:
+        generate_test(
+            args.test_gen,
+            model=args.model,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
         return
 
     if args.lint:
