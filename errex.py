@@ -98,6 +98,10 @@ def explain_error(error_text: str) -> None:
 
 
 def main() -> None:
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("errex: ANTHROPIC_API_KEY environment variable is not set.", file=sys.stderr)
+        sys.exit(1)
+
     error_text = get_error_input()
 
     if not error_text:
