@@ -2,6 +2,14 @@
 
 All notable changes to errex are documented here.
 
+## [0.17.0] — 2026-05-28
+### Added
+- `--explain-sql QUERY`: explain what a SQL query does in plain English with a clause-by-clause breakdown, performance notes, and gotchas
+- `--list-named`: list all history entries saved with `--save-as` in a table (name, date, model, error snippet)
+- `--run CMD`: run any shell command and auto-explain the error output if it fails; falls back to `--explain-exit` when there's no output
+- `--delete-profile NAME`: delete a named profile from `~/.errexrc`
+- `--pin` / `--unpin`: mark the last history entry as pinned; pinned entries are protected from `--clear-history`
+
 ## [0.16.0] — 2026-05-28
 ### Added
 - `--explain-env VAR`: explain environment variables; 40+ known vars answered instantly with current value shown if set

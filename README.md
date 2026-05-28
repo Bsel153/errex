@@ -71,7 +71,9 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--retry` | Re-explain the last error with different flags (e.g. `--retry --model claude-opus-4-7`) |
 | `--stats` | Usage dashboard: total runs, models, top error types, busiest day/hour |
 | `--export FILE` | Export history to a styled HTML or Markdown file (`--export-format html\|md`) |
-| `--clear-history [DAYS]` | Delete all history, or only entries older than N days |
+| `--list-named` | List all history entries saved with `--save-as` |
+| `--pin` / `--unpin` | Mark the last history entry as pinned (protected from `--clear-history`) |
+| `--clear-history [DAYS]` | Delete all history, or only entries older than N days (pinned entries kept) |
 
 ### Workflow
 
@@ -94,8 +96,10 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--test-gen FILE` | Generate a test case for a code file; pipe an error to reproduce the bug |
 | `--explain-diff [FILE]` | Explain a git diff — pipe `git diff \| errex --explain-diff` or pass a `.patch` file |
 | `--explain-regex PATTERN` | Explain what a regex matches: breakdown, examples, gotchas |
+| `--explain-sql QUERY` | Explain a SQL query: clause breakdown, performance notes, gotchas |
 | `--grep PATTERN FILE` | Filter a log file by regex, then explain matching lines |
 | `--env` | Auto-attach system info (OS, Python, shell, runtimes) as context |
+| `--run CMD` | Run a shell command and auto-explain any error output |
 
 ### Translation & output
 
@@ -122,6 +126,8 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--completion bash\|zsh` | Print a shell completion script (`source <(errex --completion zsh)`) |
 | `--scan` | Scan common log locations for recent error files and pick one to explain |
 | `--install-shell` | Add `errex-last()` to your shell — run it after any failed command |
+| `--list-profiles` | List all named profiles in `~/.errexrc` |
+| `--delete-profile NAME` | Delete a named profile from `~/.errexrc` |
 | `--web` | Launch a local web UI at `http://localhost:7337` |
 | `--update` | Check PyPI for a newer version |
 | `--version` | Show the installed version |
