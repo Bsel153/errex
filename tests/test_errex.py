@@ -13,25 +13,25 @@ import errex as ex
 def test_get_error_input_reads_file(tmp_path):
     f = tmp_path / "error.txt"
     f.write_text("TypeError: something went wrong")
-    assert ex.get_error_input(str(f)) == "TypeError: something went wrong"
+    assert ex.get_error_input([str(f)]) == "TypeError: something went wrong"
 
 
 def test_get_error_input_strips_whitespace(tmp_path):
     f = tmp_path / "error.txt"
     f.write_text("  some error\n\n")
-    assert ex.get_error_input(str(f)) == "some error"
+    assert ex.get_error_input([str(f)]) == "some error"
 
 
 def test_get_error_input_missing_file_exits(tmp_path):
     with pytest.raises(SystemExit) as exc:
-        ex.get_error_input(str(tmp_path / "nope.txt"))
+        ex.get_error_input([str(tmp_path / "nope.txt")])
     assert exc.value.code == 1
 
 
 def test_get_error_input_reads_stdin():
     with patch("sys.stdin", StringIO("error from stdin")):
         with patch("sys.stdin.isatty", return_value=False):
-            result = ex.get_error_input(None)
+            result = ex.get_error_input([])
     assert result == "error from stdin"
 
 
