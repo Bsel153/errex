@@ -65,6 +65,15 @@ errex --history
 errex --history "KeyError"
 ```
 
+## Web UI
+
+```bash
+errex --web
+# → opens http://localhost:7337
+```
+
+Paste your error in the browser, pick a model, hit **Explain** (or ⌘Enter). No extra dependencies.
+
 ## Shell integration
 
 Run `errex --install-shell` to add an `errex-last` function to your shell config.
