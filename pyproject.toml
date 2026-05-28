@@ -7,7 +7,7 @@ name = "errex"
 version = "0.1.0"
 description = "Paste or pipe any error message and get a plain-English explanation powered by Claude"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Bsel153" }]
 keywords = ["debugging", "errors", "ai", "claude", "developer-tools"]
@@ -23,6 +23,9 @@ dependencies = ["anthropic"]
 
 [project.urls]
 Repository = "https://github.com/Bsel153/errex"
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [project.scripts]
 errex = "errex:main"
