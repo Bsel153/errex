@@ -84,6 +84,15 @@ If the code looks clean, say so briefly. Be direct — don't invent issues that 
 
 Output as markdown."""
 
+DIFF_PROMPT = """You are a senior software engineer reviewing a code change. When given a git diff or patch, explain it clearly:
+
+1. **Summary** — One sentence: what does this change accomplish overall?
+2. **What changed** — Walk through the key changes. Focus on logic and behaviour, not cosmetic edits. Group by file if multiple files are affected.
+3. **Potential issues** — Flag anything that could introduce bugs, regressions, security problems, or unexpected behaviour. Be specific about the risk and why.
+4. **What to test** — Concrete things a reviewer or QA engineer should verify after this change.
+
+Skip files that only have trivial changes (whitespace, imports, formatting) unless they're risky. Use markdown. Be direct."""
+
 CODE_PROMPT = """You are a senior software engineer and excellent technical communicator. When given a piece of code, you will:
 
 1. **What it does** — A plain-English summary of the code's purpose (1-2 sentences).
@@ -271,6 +280,50 @@ def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> 
     print()
 
     save_history(error, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Explain what a git diff changes and what could break."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    lang_hint = f" (primary language: {lang})" if lang else ""
+    prompt = f"Please explain this diff{lang_hint}:\n\n```diff\n{diff_text}\n```"
+
+    console.rule("[bold cyan]errex — Diff Explanation[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": DIFF_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(diff_text[:200], response, model, False)
     if copy:
         copy_to_clipboard(response)
 
@@ -1059,6 +1112,7 @@ def main() -> None:
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
+    parser.add_argument("--explain-diff", metavar="FILE", dest="explain_diff", nargs="?", const="-", help="explain a git diff (pass a .diff/.patch file, or pipe: git diff | errex --explain-diff)")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -1095,6 +1149,27 @@ def main() -> None:
     if args.export:
         fmt = args.export_format or ("html" if args.export.endswith(".html") else "md")
         export_history(args.export, fmt)
+        return
+
+    if args.explain_diff is not None:
+        if args.explain_diff == "-" or args.explain_diff is True:
+            if not sys.stdin.isatty():
+                diff_text = sys.stdin.read().strip()
+            else:
+                console.print("[dim]Paste your diff below. Press Ctrl+D when done:[/dim]\n")
+                diff_text = sys.stdin.read().strip()
+        else:
+            diff_text = read_file(args.explain_diff)
+        if not diff_text:
+            err_console.print("[red]errex: no diff content provided.[/red]")
+            sys.exit(1)
+        explain_diff(
+            diff_text,
+            model=args.model,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
         return
 
     if args.lint:
