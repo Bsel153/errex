@@ -133,6 +133,36 @@ function errex-last() {
 CONFIG_DEFAULTS: dict = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
 CONFIG_TYPES: dict = {"model": str, "brief": bool, "lang": str, "copy": bool}
 
+API_TIMEOUT: int = 30  # seconds — overridden by --timeout
+
+EXIT_CODES: dict[int, tuple[str, str]] = {
+    0:   ("Success", "The command completed successfully."),
+    1:   ("General error", "The command failed — check the output above for details."),
+    2:   ("Misuse of shell built-in", "Invalid usage of a shell built-in, or the shell couldn't parse the command."),
+    126: ("Permission denied / not executable", "The command exists but cannot be run — check permissions with `ls -l`."),
+    127: ("Command not found", "The command isn't in your PATH. Check for typos or install the missing tool."),
+    128: ("Invalid exit argument", "exit() was called with an out-of-range value."),
+    129: ("SIGHUP", "Process received SIGHUP — the controlling terminal was closed."),
+    130: ("SIGINT — interrupted", "Process was interrupted by the user (Ctrl+C)."),
+    131: ("SIGQUIT", "Process was killed by SIGQUIT (Ctrl+\\). A core dump may have been written."),
+    132: ("SIGILL — illegal instruction", "Process executed an illegal CPU instruction — likely a corrupted binary or compiler bug."),
+    134: ("SIGABRT — aborted", "Process called abort() — usually from a failed assert() or intentional abort."),
+    135: ("SIGBUS — bus error", "Process tried a misaligned or non-existent memory access."),
+    136: ("SIGFPE — arithmetic error", "Floating-point exception: division by zero, overflow, or invalid operation."),
+    137: ("SIGKILL — killed", "Process was forcibly killed — likely `kill -9` or the OOM killer (out of memory)."),
+    139: ("SIGSEGV — segmentation fault", "Process accessed memory it doesn't own: null pointer, buffer overflow, or use-after-free."),
+    141: ("SIGPIPE — broken pipe", "Tried to write to a pipe whose reader already exited."),
+    143: ("SIGTERM — terminated", "Process received a graceful shutdown request (SIGTERM) and was killed."),
+    255: ("Exit status out of range", "The process returned -1 or 255 — often from SSH errors, or a script using `exit 255`."),
+}
+
+_SIGNAL_NAMES: dict[int, str] = {
+    1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 4: "SIGILL", 6: "SIGABRT",
+    7: "SIGBUS", 8: "SIGFPE", 9: "SIGKILL", 10: "SIGUSR1", 11: "SIGSEGV",
+    12: "SIGUSR2", 13: "SIGPIPE", 14: "SIGALRM", 15: "SIGTERM",
+    17: "SIGCHLD", 18: "SIGCONT", 19: "SIGSTOP", 20: "SIGTSTP",
+}
+
 
 def load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -400,7 +430,7 @@ def explain_diff(diff_text: str, model: str, lang: str | None, copy: bool, show_
     console.rule("[bold cyan]errex — Diff Explanation[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -968,7 +998,7 @@ def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> No
     console.rule("[bold cyan]errex — Regex Explanation[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -1000,6 +1030,112 @@ def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> No
         copy_to_clipboard(response)
 
 
+def explain_exit_code(code: int, model: str, copy: bool) -> None:
+    """Explain a shell exit code — known codes answered locally, unknowns via Claude."""
+    console.rule(f"[bold cyan]errex — Exit Code {code}[/bold cyan]")
+    console.print()
+
+    if code in EXIT_CODES:
+        name, explanation = EXIT_CODES[code]
+        console.print(f"[bold red]Exit {code}:[/bold red]  [bold]{name}[/bold]\n")
+        console.print(explanation)
+        console.print()
+        console.rule(style="dim")
+        if copy:
+            copy_to_clipboard(f"Exit {code}: {name}\n{explanation}")
+        return
+
+    if 128 < code <= 165:
+        sig_num = code - 128
+        sig_name = _SIGNAL_NAMES.get(sig_num, f"signal {sig_num}")
+        msg = (
+            f"The process was killed by **{sig_name}** (signal {sig_num}).\n\n"
+            f"Exit code {code} = 128 + {sig_num} (the signal number)."
+        )
+        console.print(f"[bold red]Exit {code}:[/bold red]  [bold]Killed by {sig_name}[/bold]\n")
+        console.print(Markdown(msg))
+        console.print()
+        console.rule(style="dim")
+        if copy:
+            copy_to_clipboard(f"Exit {code}: Killed by {sig_name}\n{msg}")
+        return
+
+    # Unknown — fall through to Claude
+    console.print(f"[dim]Unknown exit code — asking Claude…[/dim]\n")
+    prompt = (
+        f"Explain shell exit code {code}. Cover: what it typically means, "
+        f"which tools or runtimes commonly return it, and how to diagnose or fix the root cause. "
+        f"Be concise and use markdown."
+    )
+    _, in_tok, out_tok = call_claude(
+        str(code), model=model,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    print()
+    console.rule(style="dim")
+    if copy:
+        copy_to_clipboard(prompt)
+
+
+def post_webhook(url: str, error_text: str, explanation: str, model: str) -> None:
+    """POST the explanation to a webhook URL (Slack, Discord, or generic JSON)."""
+    timestamp = datetime.now().isoformat()
+
+    if "hooks.slack.com" in url or ("slack.com" in url and "services" in url):
+        text = f"*errex — Error Explanation*\n\n*Error:*\n```{error_text[:300]}```\n\n{explanation[:2000]}"
+        payload: dict = {"text": text}
+    elif "discord.com/api/webhooks" in url or "discordapp.com" in url:
+        content = f"**errex — Error Explanation**\n**Error:** `{error_text[:100]}`\n\n{explanation[:1900]}"
+        payload = {"content": content}
+    else:
+        payload = {
+            "error": error_text,
+            "explanation": explanation,
+            "model": model,
+            "timestamp": timestamp,
+        }
+
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "errex"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            status = resp.status
+        console.print(f"\n[green]Webhook posted[/green] [dim](HTTP {status} → {url})[/dim]")
+    except urllib.error.URLError as e:
+        err_console.print(f"[yellow]errex: webhook failed — {e}[/yellow]")
+
+
+def find_by_name(name: str) -> None:
+    """Find history entries saved with --save-as NAME."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    matches = [e for e in entries if e.get("name", "").lower() == name.lower()]
+
+    if not matches:
+        console.print(f"[yellow]No entries found with name '{name}'.[/yellow]")
+        console.print("[dim]Tip: save an explanation with: errex --save-as NAME[/dim]")
+        sys.exit(0)
+
+    console.rule(f"[bold cyan]errex — Saved: {name}[/bold cyan]")
+    console.print(f"[dim]{len(matches)} entry{'s' if len(matches) != 1 else ''} found[/dim]\n")
+    for entry in matches:
+        label = f"  {entry['timestamp'][:19]}  ·  {entry['model']}"
+        console.rule(label, style="dim")
+        console.print(f"[bold red]Error:[/bold red] {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}\n")
+        console.print(Markdown(entry["explanation"]))
+        console.print()
+
+
 def show_token_usage(input_tokens: int, output_tokens: int) -> None:
     total = input_tokens + output_tokens
     console.print(
@@ -1024,7 +1160,7 @@ def call_claude(
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
         sys.exit(1)
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     lang_hint = f" (language: {lang})" if lang else ""
     context_block = f"\n\nFor context, here is the relevant code:\n```\n{context}\n```" if context else ""
     translate_suffix = f"\n\nRespond entirely in {translate}." if translate else ""
@@ -1117,6 +1253,7 @@ def explain_error(
     translate: str | None = None,
     save_as: str | None = None,
     output_file: str | None = None,
+    webhook: str | None = None,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
@@ -1160,6 +1297,9 @@ def explain_error(
     if issues:
         search_github_issues(error_text)
 
+    if webhook:
+        post_webhook(webhook, error_text, response, model)
+
     if chat and sys.stdin.isatty():
         chat_loop(error_text, response, model, lang)
 
@@ -1191,7 +1331,7 @@ def compare_errors(files: list[str], model: str, lang: str | None, copy: bool) -
     console.rule(f"[bold cyan]errex — Comparing {len(errors)} errors[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     try:
         with client.messages.stream(
@@ -1326,7 +1466,7 @@ def summarize_log(path: str, model: str, copy: bool, show_tokens: bool) -> None:
     console.rule(f"[bold cyan]errex — Log Summary: {Path(path).name}[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -1415,7 +1555,7 @@ def run_doctor() -> None:
     # 2. Live API ping
     if api_key:
         try:
-            client = anthropic.Anthropic(api_key=api_key)
+            client = anthropic.Anthropic(api_key=api_key, timeout=API_TIMEOUT)
             msg = client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=8,
@@ -1606,7 +1746,7 @@ def generate_test(code_path: str, error_text: str | None, model: str, lang: str 
     console.rule(f"[bold cyan]errex — Test Gen: {Path(code_path).name}[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -1651,7 +1791,7 @@ def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: 
     console.rule(f"[bold cyan]errex — Lint: {Path(path).name}[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -1696,7 +1836,7 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
     console.rule("[bold cyan]errex — Code Explanation[/bold cyan]")
     print()
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=API_TIMEOUT)
     collected = []
     input_tokens = output_tokens = 0
     try:
@@ -1794,6 +1934,14 @@ def main() -> None:
                         help="save this explanation with a memorable name for quick retrieval")
     parser.add_argument("--grep", nargs=2, metavar=("PATTERN", "FILE"),
                         help="filter a log file by regex pattern, then explain matching lines")
+    parser.add_argument("--explain-exit", metavar="CODE", type=int, dest="explain_exit",
+                        help="explain a shell exit code (e.g. --explain-exit 139 → segfault)")
+    parser.add_argument("--webhook", metavar="URL",
+                        help="POST the explanation as JSON to a URL (Slack, Discord, or generic)")
+    parser.add_argument("--find-name", metavar="NAME", dest="find_name",
+                        help="retrieve a history entry saved with --save-as NAME")
+    parser.add_argument("--timeout", metavar="N", type=int, default=30,
+                        help="API request timeout in seconds (default: 30)")
     parser.add_argument("--output", metavar="FILE",
                         help="save the explanation to a file (in addition to printing)")
     parser.add_argument("--terse", action="store_true",
@@ -1813,6 +1961,9 @@ def main() -> None:
         global console, err_console
         console = Console(no_color=True, highlight=False)
         err_console = Console(stderr=True, no_color=True, highlight=False)
+
+    global API_TIMEOUT
+    API_TIMEOUT = args.timeout
 
     if "--config" in sys.argv:
         manage_config(args.config)
@@ -1865,6 +2016,14 @@ def main() -> None:
             copy=args.copy or False,
             show_tokens=args.tokens,
         )
+        return
+
+    if args.explain_exit is not None:
+        explain_exit_code(args.explain_exit, model=args.model, copy=args.copy or False)
+        return
+
+    if args.find_name:
+        find_by_name(args.find_name)
         return
 
     if args.ask:
@@ -2017,6 +2176,7 @@ def main() -> None:
         translate=args.translate,
         save_as=args.save_as,
         output_file=args.output,
+        webhook=args.webhook,
     )
 
     check_for_update()
