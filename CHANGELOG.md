@@ -2,6 +2,15 @@
 
 All notable changes to errex are documented here.
 
+## [0.9.0] — 2026-05-28
+### Added
+- `--version`: show the installed version
+- `--recent [N]`: show the last N history entries (default 5)
+- `--summarize-log FILE`: diagnostic digest of all distinct error types in a large log file
+- `--retry`: re-explain the last error from history with different flags
+### Changed
+- README completely rewritten — full reference table for all 30+ flags
+
 ## [0.8.0] — 2026-05-28
 ### Added
 - `--similar`: search your own history for past errors similar to the current one (Jaccard similarity on error fingerprints)
