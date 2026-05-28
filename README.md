@@ -65,6 +65,7 @@ errex --watch server.log     # tail a log, auto-explain errors
 |------|-------------|
 | `--history [SEARCH]` | View past explanations, optionally filtered by keyword |
 | `--recent [N]` | Show the last N explanations (default: 5) |
+| `--since DATE` | Filter `--history`/`--recent` to entries on or after `YYYY-MM-DD` |
 | `--similar` | Find past errors in your history that match the current one |
 | `--ask "question"` | Ask a follow-up about the last error without re-explaining it |
 | `--retry` | Re-explain the last error with different flags (e.g. `--retry --model claude-opus-4-7`) |
@@ -92,7 +93,9 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--lint FILE` | Scan a code file for bugs, security issues, and anti-patterns |
 | `--test-gen FILE` | Generate a test case for a code file; pipe an error to reproduce the bug |
 | `--explain-diff [FILE]` | Explain a git diff — pipe `git diff \| errex --explain-diff` or pass a `.patch` file |
+| `--explain-regex PATTERN` | Explain what a regex matches: breakdown, examples, gotchas |
 | `--grep PATTERN FILE` | Filter a log file by regex, then explain matching lines |
+| `--env` | Auto-attach system info (OS, Python, shell, runtimes) as context |
 
 ### Translation & output
 
@@ -101,7 +104,10 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--translate LANG` | Respond in a spoken language (`--translate Spanish`, `--translate Japanese`) |
 | `--save-as NAME` | Tag this explanation with a name for quick retrieval |
 | `--json` | Structured JSON output: `error_type`, `root_cause`, `fix_steps`, `gotchas` |
+| `--terse` | Single-sentence diagnosis — shorter than `--brief`, great for scripting |
 | `--fix` | Output only the fix command, no explanation |
+| `--output FILE` | Save the explanation to a file alongside printing |
+| `--no-color` | Plain-text output with no rich formatting (safe to pipe) |
 | `--copy` | Copy the explanation to the clipboard |
 | `--share` | Post the explanation to paste.rs and print a shareable link |
 | `--tokens` | Show input/output token counts after each explanation |
