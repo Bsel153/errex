@@ -103,6 +103,16 @@ CODE_PROMPT = """You are a senior software engineer and excellent technical comm
 
 Use markdown. Be concise but complete."""
 
+LOG_SUMMARY_PROMPT = """You are a senior engineer analyzing a log file. Produce a concise diagnostic digest:
+
+1. **Error summary** — List each distinct error type with an approximate count. Skip routine info/debug lines.
+2. **Most critical issue** — Which error is most likely causing user-facing problems right now?
+3. **Timeline** — If timestamps are present, note when errors started and whether frequency is increasing or recovering.
+4. **Root cause hypothesis** — What is the most likely underlying cause linking the errors?
+5. **Recommended action** — The single most important thing to investigate or fix first.
+
+Use markdown. Be concise and direct."""
+
 SHELL_FUNCTION = """
 # errex shell integration — added by errex --install-shell
 function errex-last() {
@@ -1148,6 +1158,119 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
             console.print("\n[dim]Stopped watching.[/dim]")
 
 
+def show_recent(n: int) -> None:
+    """Show the N most recent history entries."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    recent = entries[-n:]
+    label = f"Last {len(recent)} explanation{'s' if len(recent) != 1 else ''}"
+    console.rule(f"[bold cyan]errex — {label}[/bold cyan]")
+    console.print()
+
+    for entry in recent:
+        meta = f"  {entry['timestamp'][:19]}  ·  {entry['model']}{'  ·  brief' if entry.get('brief') else ''}"
+        console.rule(meta, style="dim")
+        console.print(f"[bold red]Error:[/bold red] {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}\n")
+        console.print(Markdown(entry["explanation"]))
+        console.print()
+
+
+def summarize_log(path: str, model: str, copy: bool, show_tokens: bool) -> None:
+    """Produce a digest of all distinct errors in a log file."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    content = read_file(path)
+    if len(content) > 8000:
+        content = content[-8000:]
+        console.print("[dim](log is large — using the last 8000 chars where errors typically appear)[/dim]")
+
+    prompt = f"Analyze this log file and produce a diagnostic digest:\n\n```\n{content}\n```"
+
+    console.rule(f"[bold cyan]errex — Log Summary: {Path(path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=[{"type": "text", "text": LOG_SUMMARY_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(content[:200], response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
+def retry_last(
+    model: str,
+    brief: bool,
+    fix: bool,
+    lang: str | None,
+    copy: bool,
+    show_tokens: bool,
+    chat: bool,
+) -> None:
+    """Re-explain the last error from history with the given flags."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet — run errex on an error first.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    last = entries[-1]
+    error = last.get("error", "")
+    ts = last.get("timestamp", "")[:19]
+
+    console.print(f"[dim]Retrying:[/dim] {error[:80]}{'...' if len(error) > 80 else ''}  [dim]({ts})[/dim]\n")
+
+    explain_error(
+        error,
+        model=model,
+        brief=brief,
+        fix=fix,
+        lang=lang,
+        copy=copy,
+        show_tokens=show_tokens,
+        chat=chat,
+    )
+
+
 def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
     """Scan a code file for potential bugs and issues."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1245,10 +1368,16 @@ def explain_code(path: str, model: str, lang: str | None, copy: bool, show_token
 def main() -> None:
     config = load_config()
 
+    try:
+        _ver = importlib.metadata.version("errex")
+    except importlib.metadata.PackageNotFoundError:
+        _ver = "dev"
+
     parser = argparse.ArgumentParser(
         prog="errex",
         description="Paste or pipe an error message and get a plain-English explanation.",
     )
+    parser.add_argument("--version", action="version", version=f"errex {_ver}")
     parser.add_argument("files", nargs="*", help="one or more files containing errors (pass 2+ to compare them)")
     parser.add_argument("--model", help="Claude model to use (default: claude-sonnet-4-6)")
     parser.add_argument("--brief", action="store_true", default=None, help="one-paragraph summary instead of full analysis")
@@ -1280,6 +1409,12 @@ def main() -> None:
     parser.add_argument("--config", nargs="?", const=None, metavar="KEY=VALUE", help="view or set config (e.g. --config model=claude-opus-4-7); omit value to show all settings")
     parser.add_argument("--clear-history", nargs="?", const=0, type=int, metavar="DAYS", dest="clear_history",
                         help="delete history entries (all by default; pass DAYS to only remove entries older than N days)")
+    parser.add_argument("--recent", nargs="?", const=5, type=int, metavar="N",
+                        help="show the N most recent history entries (default: 5)")
+    parser.add_argument("--summarize-log", metavar="FILE", dest="summarize_log",
+                        help="produce a diagnostic digest of all distinct errors in a log file")
+    parser.add_argument("--retry", action="store_true",
+                        help="re-explain the last error from history (combine with --model, --brief, etc.)")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -1290,6 +1425,31 @@ def main() -> None:
     if args.clear_history is not None:
         days = args.clear_history if args.clear_history > 0 else None
         clear_history(days)
+        return
+
+    if args.recent is not None:
+        show_recent(args.recent)
+        return
+
+    if args.summarize_log:
+        summarize_log(
+            args.summarize_log,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
+        return
+
+    if args.retry:
+        retry_last(
+            model=args.model,
+            brief=args.brief or False,
+            fix=args.fix,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+            chat=args.chat,
+        )
         return
 
     if args.ask:
