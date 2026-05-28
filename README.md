@@ -73,6 +73,8 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--export FILE` | Export history to a styled HTML or Markdown file (`--export-format html\|md`) |
 | `--list-named` | List all history entries saved with `--save-as` |
 | `--pin` / `--unpin` | Mark the last history entry as pinned (protected from `--clear-history`) |
+| `--filter TYPE` | Filter `--history`/`--recent` to entries matching an error type (e.g. `TypeError`) |
+| `--export-csv FILE` | Export history to CSV (timestamp, model, error type, rating, name) |
 | `--clear-history [DAYS]` | Delete all history, or only entries older than N days (pinned entries kept) |
 
 ### Workflow
@@ -97,9 +99,11 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--explain-diff [FILE]` | Explain a git diff — pipe `git diff \| errex --explain-diff` or pass a `.patch` file |
 | `--explain-regex PATTERN` | Explain what a regex matches: breakdown, examples, gotchas |
 | `--explain-sql QUERY` | Explain a SQL query: clause breakdown, performance notes, gotchas |
+| `--explain-yaml FILE` | Explain a YAML config (auto-detects docker-compose, k8s, GitHub Actions) |
 | `--grep PATTERN FILE` | Filter a log file by regex, then explain matching lines |
 | `--env` | Auto-attach system info (OS, Python, shell, runtimes) as context |
 | `--run CMD` | Run a shell command and auto-explain any error output |
+| `--redact` | Strip API keys, tokens, and passwords from error text before sending to Claude |
 
 ### Translation & output
 
@@ -115,6 +119,7 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--copy` | Copy the explanation to the clipboard |
 | `--share` | Post the explanation to paste.rs and print a shareable link |
 | `--tokens` | Show input/output token counts after each explanation |
+| `--perf` | Show response time and tokens/second after each explanation |
 
 ### Setup & config
 

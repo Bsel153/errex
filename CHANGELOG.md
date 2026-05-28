@@ -2,6 +2,14 @@
 
 All notable changes to errex are documented here.
 
+## [0.18.0] — 2026-05-28
+### Added
+- `--redact`: auto-strip API keys, tokens, and passwords from error text before sending to Claude (Anthropic, GitHub, AWS, JWT, Bearer, password/secret/token fields)
+- `--explain-yaml FILE`: explain a YAML config file in plain English; auto-detects Docker Compose, Kubernetes manifests, and GitHub Actions workflows
+- `--filter TYPE`: narrow `--history` and `--recent` to entries matching an error type keyword (e.g. `--recent --filter TypeError`)
+- `--export-csv FILE`: export history to CSV with columns timestamp, model, error_type, error, explanation_length, rating, name, pinned
+- `--perf`: show response time and tokens/second after every explanation; works with all explain commands
+
 ## [0.17.0] — 2026-05-28
 ### Added
 - `--explain-sql QUERY`: explain what a SQL query does in plain English with a clause-by-clause breakdown, performance notes, and gotchas
