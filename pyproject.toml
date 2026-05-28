@@ -6,8 +6,23 @@ build-backend = "setuptools.build_meta"
 name = "errex"
 version = "0.1.0"
 description = "Paste or pipe any error message and get a plain-English explanation powered by Claude"
+readme = "README.md"
 requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Bsel153" }]
+keywords = ["debugging", "errors", "ai", "claude", "developer-tools"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Debuggers",
+]
 dependencies = ["anthropic"]
+
+[project.urls]
+Repository = "https://github.com/Bsel153/errex"
 
 [project.scripts]
 errex = "errex:main"
