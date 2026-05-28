@@ -1,5 +1,9 @@
 # errex — Error Explainer
 
+[![CI](https://github.com/Bsel153/errex/actions/workflows/ci.yml/badge.svg)](https://github.com/Bsel153/errex/actions/workflows/ci.yml)
+[![PyPI version](https://img.shields.io/pypi/v/errex)](https://pypi.org/project/errex/)
+[![Python versions](https://img.shields.io/pypi/pyversions/errex)](https://pypi.org/project/errex/)
+
 Paste or pipe any error message and get a clear, plain-English explanation powered by Claude.
 
 ```
