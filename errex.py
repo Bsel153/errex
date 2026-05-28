@@ -29,6 +29,7 @@ from pathlib import Path
 import re
 import urllib.request
 import urllib.error
+import importlib.metadata
 from collections import Counter
 
 import anthropic
@@ -443,6 +444,48 @@ def install_shell() -> None:
     console.print("[dim]Then use: errex-last  (after any failed command)[/dim]")
 
 
+def notify(title: str, message: str) -> None:
+    """Send a macOS desktop notification (no-op on other platforms)."""
+    if platform.system() != "Darwin":
+        return
+    try:
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{message[:100]}" with title "{title}"'],
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+
+
+def check_for_update() -> None:
+    """Check PyPI for a newer version and print a notice if one exists."""
+    try:
+        current = importlib.metadata.version("errex")
+    except importlib.metadata.PackageNotFoundError:
+        return
+    try:
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/errex/json",
+            headers={"User-Agent": f"errex/{current}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            latest = json.loads(resp.read())["info"]["version"]
+        if latest != current:
+            console.print(
+                f"\n[yellow]Update available:[/yellow] {current} → [bold]{latest}[/bold]  "
+                f"[dim]pip install --upgrade errex[/dim]\n"
+            )
+    except Exception:
+        pass
+
+
+def show_token_usage(input_tokens: int, output_tokens: int) -> None:
+    total = input_tokens + output_tokens
+    console.print(
+        f"[dim]tokens: {input_tokens:,} in · {output_tokens:,} out · {total:,} total[/dim]"
+    )
+
+
 def call_claude(
     error_text: str,
     model: str,
@@ -450,48 +493,84 @@ def call_claude(
     json_output: bool = False,
     fix: bool = False,
     lang: str | None = None,
-) -> str:
-    """Send error to Claude and return the full response, streaming to stdout."""
+    context: str | None = None,
+    messages: list | None = None,
+) -> tuple[str, int, int]:
+    """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
         sys.exit(1)
 
     client = anthropic.Anthropic()
     lang_hint = f" (language: {lang})" if lang else ""
+    context_block = f"\n\nFor context, here is the relevant code:\n```\n{context}\n```" if context else ""
 
-    if fix:
-        prompt = (
-            f"Given this error{lang_hint}, output ONLY the exact shell command(s) to fix it "
-            f"as a code block. No explanation.\n\n```\n{error_text}\n```"
-        )
-    elif json_output:
-        prompt = (
-            f"Explain this error{lang_hint} as JSON with keys: error_type, language, "
-            f"explanation, root_cause, fix_steps (array), gotchas (array). "
-            f"Return only valid JSON, no markdown fences.\n\n```\n{error_text}\n```"
-        )
-    elif brief:
-        prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```"
-    else:
-        prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```"
+    if messages is None:
+        if fix:
+            prompt = f"Given this error{lang_hint}, output ONLY the exact shell command(s) to fix it as a code block. No explanation.\n\n```\n{error_text}\n```{context_block}"
+        elif json_output:
+            prompt = (
+                f"Explain this error{lang_hint} as JSON with keys: error_type, language, "
+                f"explanation, root_cause, fix_steps (array), gotchas (array). "
+                f"Return only valid JSON, no markdown fences.\n\n```\n{error_text}\n```{context_block}"
+            )
+        elif brief:
+            prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```{context_block}"
+        else:
+            prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}"
+        messages = [{"role": "user", "content": prompt}]
 
     collected = []
+    input_tokens = output_tokens = 0
     try:
         with client.messages.stream(
             model=model,
             max_tokens=256 if brief else 2048,
             system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         ) as stream:
             for text in stream.text_stream:
                 if not json_output:
                     print(text, end="", flush=True)
                 collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
     except anthropic.APIError as e:
-        console.print(f"\n[red]errex: API error — {e}[/red]", file=sys.stderr)
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
         sys.exit(2)
 
-    return "".join(collected)
+    return "".join(collected), input_tokens, output_tokens
+
+
+def chat_loop(error_text: str, initial_response: str, model: str, lang: str | None) -> None:
+    """After the initial explanation, let the user ask follow-up questions."""
+    lang_hint = f" (language: {lang})" if lang else ""
+    history = [
+        {"role": "user", "content": f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```"},
+        {"role": "assistant", "content": initial_response},
+    ]
+    console.print("[dim]Ask a follow-up question, or press Ctrl+C to exit.[/dim]\n")
+    while True:
+        try:
+            question = input("You: ").strip()
+            if not question:
+                continue
+            history.append({"role": "user", "content": question})
+            print()
+            console.rule("[dim]errex[/dim]")
+            print()
+            response, in_tok, out_tok = call_claude(
+                error_text, model=model, lang=lang, messages=history
+            )
+            history.append({"role": "assistant", "content": response})
+            print()
+            show_token_usage(in_tok, out_tok)
+            console.rule(style="dim")
+            print()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Exiting chat.[/dim]")
+            break
 
 
 def explain_error(
@@ -503,13 +582,20 @@ def explain_error(
     lang: str | None = None,
     copy: bool = False,
     share: bool = False,
+    show_tokens: bool = False,
+    chat: bool = False,
+    context: str | None = None,
+    do_notify: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
         console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
 
-    response = call_claude(error_text, model=model, brief=brief, json_output=json_output, fix=fix, lang=lang)
+    response, in_tok, out_tok = call_claude(
+        error_text, model=model, brief=brief, json_output=json_output,
+        fix=fix, lang=lang, context=context,
+    )
 
     if json_output:
         try:
@@ -519,6 +605,8 @@ def explain_error(
             print(response)
     else:
         print()
+        if show_tokens:
+            show_token_usage(in_tok, out_tok)
         console.rule(style="dim")
         print()
 
@@ -529,6 +617,12 @@ def explain_error(
 
     if share:
         share_explanation(error_text, response)
+
+    if do_notify:
+        notify("errex", f"Error explained: {error_text[:60]}")
+
+    if chat and sys.stdin.isatty():
+        chat_loop(error_text, response, model, lang)
 
 
 def compare_errors(files: list[str], model: str, lang: str | None, copy: bool) -> None:
@@ -611,7 +705,8 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
                 elif has_error and last_activity and time.time() - last_activity > 2.0:
                     text = "".join(buffer).strip()
                     console.print("\n[bold yellow]New error detected[/bold yellow]")
-                    explain_error(text, model=model, brief=brief, lang=lang)
+                    notify("errex — error detected", path)
+                    explain_error(text, model=model, brief=brief, lang=lang, do_notify=False)
                     buffer = []
                     has_error = False
                     last_activity = None
@@ -643,6 +738,11 @@ def main() -> None:
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
     parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
+    parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
+    parser.add_argument("--chat", action="store_true", help="stay in a follow-up Q&A loop after the explanation")
+    parser.add_argument("--tokens", action="store_true", help="show token usage after each explanation")
+    parser.add_argument("--notify", action="store_true", help="send a desktop notification when the explanation is ready")
+    parser.add_argument("--update", action="store_true", help="check for a newer version of errex")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -653,6 +753,10 @@ def main() -> None:
     if args.web:
         from web import serve
         serve()
+        return
+
+    if args.update:
+        check_for_update()
         return
 
     if args.setup:
@@ -685,6 +789,8 @@ def main() -> None:
         parser.print_usage(sys.stderr)
         sys.exit(1)
 
+    context_text = read_file(args.context) if args.context else None
+
     explain_error(
         error_text,
         model=args.model,
@@ -694,7 +800,13 @@ def main() -> None:
         lang=args.lang,
         copy=args.copy or False,
         share=args.share,
+        show_tokens=args.tokens,
+        chat=args.chat,
+        context=context_text,
+        do_notify=args.notify,
     )
+
+    check_for_update()
 
 
 if __name__ == "__main__":
