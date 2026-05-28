@@ -233,6 +233,70 @@ def extract_error_type(error_text: str) -> str:
     return "unknown"
 
 
+def export_history(output_path: str, fmt: str) -> None:
+    """Export history to an HTML or Markdown file."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history to export.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    if fmt == "html":
+        lines = ["""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>errex history</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; background: #0f1117; color: #e2e8f0; }
+  h1 { color: #7dd3fc; } .entry { border: 1px solid #2d3748; border-radius: 8px; padding: 1.25rem; margin: 1.5rem 0; }
+  .meta { color: #64748b; font-size: 0.85rem; margin-bottom: 0.75rem; }
+  .error-block { background: #1e2130; border-radius: 6px; padding: 0.75rem; font-family: monospace; font-size: 0.85rem; color: #f87171; white-space: pre-wrap; margin-bottom: 1rem; }
+  .explanation { line-height: 1.7; } h2,h3 { color: #7dd3fc; } code { background: #1e2130; padding: 0.1em 0.4em; border-radius: 4px; color: #86efac; }
+  pre { background: #1e2130; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+</style>
+</head><body>
+<h1>errex — Export</h1>"""]
+        for e in entries:
+            ts = e.get("timestamp", "")[:19]
+            model = e.get("model", "")
+            brief = " · brief" if e.get("brief") else ""
+            error = e.get("error", "")
+            explanation = e.get("explanation", "")
+            lines.append(f"""<div class="entry">
+  <div class="meta">{ts} · {model}{brief}</div>
+  <div class="error-block">{error}</div>
+  <div class="explanation" data-md="{explanation.replace('"', '&quot;')}"></div>
+</div>""")
+        lines.append("""<script>
+  document.querySelectorAll('[data-md]').forEach(el => {
+    el.innerHTML = marked.parse(el.dataset.md);
+  });
+</script></body></html>""")
+        content = "\n".join(lines)
+
+    else:  # markdown
+        md_parts = ["# errex History\n"]
+        for e in entries:
+            ts = e.get("timestamp", "")[:19]
+            model = e.get("model", "")
+            brief = " · brief" if e.get("brief") else ""
+            error = e.get("error", "")
+            explanation = e.get("explanation", "")
+            md_parts.append(f"---\n\n**{ts}** · {model}{brief}\n\n**Error:**\n```\n{error}\n```\n\n{explanation}\n")
+        content = "\n".join(md_parts)
+
+    out = Path(output_path)
+    out.write_text(content, encoding="utf-8")
+    console.print(f"[green]Exported {len(entries)} entries to[/green] [cyan]{out.resolve()}[/cyan]")
+
+
 def show_stats() -> None:
     """Print usage statistics from ~/.errex_history."""
     if not HISTORY_FILE.exists():
@@ -950,6 +1014,8 @@ def main() -> None:
     parser.add_argument("--explain-code", metavar="FILE", dest="explain_code", help="explain what a piece of code does")
     parser.add_argument("--issues", action="store_true", help="search GitHub Issues for similar errors after explaining")
     parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
+    parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
+    parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -972,6 +1038,11 @@ def main() -> None:
 
     if args.scan:
         scan_logs()
+        return
+
+    if args.export:
+        fmt = args.export_format or ("html" if args.export.endswith(".html") else "md")
+        export_history(args.export, fmt)
         return
 
     if args.lint:
