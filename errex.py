@@ -113,6 +113,15 @@ LOG_SUMMARY_PROMPT = """You are a senior engineer analyzing a log file. Produce 
 
 Use markdown. Be concise and direct."""
 
+REGEX_PROMPT = """You are a senior developer and regex expert. When given a regular expression, explain it clearly:
+
+1. **What it matches** — plain-English summary of what strings this pattern accepts
+2. **Component breakdown** — explain each token (groups, quantifiers, character classes, anchors, alternation) in a compact table: | Part | Meaning |
+3. **Match examples** — 3–5 strings that match, 2–3 that don't
+4. **Gotchas** — edge cases, greedy vs lazy, backtracking, flag sensitivity, or platform differences worth knowing
+
+Be concise. Use markdown."""
+
 SHELL_FUNCTION = """
 # errex shell integration — added by errex --install-shell
 function errex-last() {
@@ -270,7 +279,16 @@ def save_history(error_text: str, explanation: str, model: str, brief: bool, nam
         f.write(json.dumps(entry) + "\n")
 
 
-def show_history(search: str | None) -> None:
+def _parse_since(since: str) -> datetime | None:
+    """Parse a YYYY-MM-DD date string, return a datetime or None on failure."""
+    try:
+        return datetime.strptime(since, "%Y-%m-%d")
+    except ValueError:
+        err_console.print(f"[red]errex: --since expects YYYY-MM-DD, got: {since!r}[/red]")
+        sys.exit(1)
+
+
+def show_history(search: str | None, since: str | None = None) -> None:
     """Print past explanations from the history file."""
     if not HISTORY_FILE.exists():
         console.print("[yellow]No history yet.[/yellow]")
@@ -278,6 +296,13 @@ def show_history(search: str | None) -> None:
 
     with open(HISTORY_FILE, encoding="utf-8") as f:
         entries = [json.loads(line) for line in f if line.strip()]
+
+    if since:
+        cutoff = _parse_since(since)
+        entries = [
+            e for e in entries
+            if datetime.fromisoformat(e["timestamp"]) >= cutoff
+        ]
 
     if search:
         entries = [
@@ -894,6 +919,87 @@ def check_for_update() -> None:
         pass
 
 
+def get_env_info() -> str:
+    """Collect cross-platform system info to attach as error context."""
+    info = []
+    info.append(f"OS: {platform.system()} {platform.release()} ({platform.machine()})")
+    info.append(f"Python: {sys.version.split()[0]}")
+
+    if platform.system() == "Windows":
+        psmod = os.environ.get("PSModulePath", "")
+        if psmod:
+            shell = "PowerShell"
+        else:
+            comspec = os.environ.get("COMSPEC", "cmd.exe")
+            shell = Path(comspec).name
+    else:
+        shell = os.environ.get("SHELL", "unknown")
+    info.append(f"Shell: {shell}")
+
+    for cmd, flag in [
+        ("node", "--version"),
+        ("go", "version"),
+        ("rustc", "--version"),
+        ("java", "-version"),
+        ("ruby", "--version"),
+        ("php", "--version"),
+    ]:
+        try:
+            result = subprocess.run(
+                [cmd, flag], capture_output=True, text=True, timeout=3,
+            )
+            line = (result.stdout or result.stderr).strip().split("\n")[0]
+            if line:
+                info.append(f"{cmd}: {line}")
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
+
+    return "\n".join(info)
+
+
+def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool) -> None:
+    """Explain a regular expression in plain English."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    prompt = f"Explain this regular expression:\n\n```\n{pattern}\n```"
+
+    console.rule("[bold cyan]errex — Regex Explanation[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=1024,
+            system=[{"type": "text", "text": REGEX_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(pattern, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
 def show_token_usage(input_tokens: int, output_tokens: int) -> None:
     total = input_tokens + output_tokens
     console.print(
@@ -905,6 +1011,7 @@ def call_claude(
     error_text: str,
     model: str,
     brief: bool = False,
+    terse: bool = False,
     json_output: bool = False,
     fix: bool = False,
     lang: str | None = None,
@@ -931,6 +1038,8 @@ def call_claude(
                 f"explanation, root_cause, fix_steps (array), gotchas (array). "
                 f"Return only valid JSON, no markdown fences.\n\n```\n{error_text}\n```{context_block}"
             )
+        elif terse:
+            prompt = f"In exactly one sentence, state what this error{lang_hint} is and the single most likely fix. No preamble.\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         elif brief:
             prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         else:
@@ -942,7 +1051,7 @@ def call_claude(
     try:
         with client.messages.stream(
             model=model,
-            max_tokens=256 if brief else 2048,
+            max_tokens=64 if terse else (256 if brief else 2048),
             system=[{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
             messages=messages,
         ) as stream:
@@ -994,6 +1103,7 @@ def explain_error(
     error_text: str,
     model: str,
     brief: bool = False,
+    terse: bool = False,
     json_output: bool = False,
     fix: bool = False,
     lang: str | None = None,
@@ -1006,6 +1116,7 @@ def explain_error(
     issues: bool = False,
     translate: str | None = None,
     save_as: str | None = None,
+    output_file: str | None = None,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
@@ -1013,7 +1124,7 @@ def explain_error(
         print()
 
     response, in_tok, out_tok = call_claude(
-        error_text, model=model, brief=brief, json_output=json_output,
+        error_text, model=model, brief=brief, terse=terse, json_output=json_output,
         fix=fix, lang=lang, context=context, translate=translate,
     )
 
@@ -1031,6 +1142,11 @@ def explain_error(
         print()
 
     save_history(error_text, response, model, brief, name=save_as)
+
+    if output_file:
+        out = Path(output_file)
+        out.write_text(response, encoding="utf-8")
+        err_console.print(f"[dim](saved to {out.resolve()})[/dim]")
 
     if copy:
         copy_to_clipboard(response)
@@ -1164,7 +1280,7 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
             console.print("\n[dim]Stopped watching.[/dim]")
 
 
-def show_recent(n: int) -> None:
+def show_recent(n: int, since: str | None = None) -> None:
     """Show the N most recent history entries."""
     if not HISTORY_FILE.exists():
         console.print("[yellow]No history yet.[/yellow]")
@@ -1176,6 +1292,10 @@ def show_recent(n: int) -> None:
     if not entries:
         console.print("[yellow]History is empty.[/yellow]")
         sys.exit(0)
+
+    if since:
+        cutoff = _parse_since(since)
+        entries = [e for e in entries if datetime.fromisoformat(e["timestamp"]) >= cutoff]
 
     recent = entries[-n:]
     label = f"Last {len(recent)} explanation{'s' if len(recent) != 1 else ''}"
@@ -1674,8 +1794,25 @@ def main() -> None:
                         help="save this explanation with a memorable name for quick retrieval")
     parser.add_argument("--grep", nargs=2, metavar=("PATTERN", "FILE"),
                         help="filter a log file by regex pattern, then explain matching lines")
+    parser.add_argument("--output", metavar="FILE",
+                        help="save the explanation to a file (in addition to printing)")
+    parser.add_argument("--terse", action="store_true",
+                        help="one-sentence diagnosis — shorter than --brief, great for scripting")
+    parser.add_argument("--no-color", action="store_true", dest="no_color",
+                        help="plain-text output with no rich formatting (safe to pipe)")
+    parser.add_argument("--since", metavar="DATE",
+                        help="filter --history/--recent to entries on or after DATE (YYYY-MM-DD)")
+    parser.add_argument("--env", action="store_true",
+                        help="auto-attach system info (OS, Python, shell, runtimes) as context")
+    parser.add_argument("--explain-regex", metavar="PATTERN", dest="explain_regex",
+                        help="explain what a regular expression matches in plain English")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.no_color:
+        global console, err_console
+        console = Console(no_color=True, highlight=False)
+        err_console = Console(stderr=True, no_color=True, highlight=False)
 
     if "--config" in sys.argv:
         manage_config(args.config)
@@ -1687,7 +1824,7 @@ def main() -> None:
         return
 
     if args.recent is not None:
-        show_recent(args.recent)
+        show_recent(args.recent, since=args.since)
         return
 
     if args.summarize_log:
@@ -1826,7 +1963,16 @@ def main() -> None:
         return
 
     if args.history is not None:
-        show_history(args.history or None)
+        show_history(args.history or None, since=args.since)
+        return
+
+    if args.explain_regex:
+        explain_regex(
+            args.explain_regex,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
         return
 
     if args.watch:
@@ -1849,10 +1995,15 @@ def main() -> None:
 
     context_text = read_file(args.context) if args.context else None
 
+    if args.env:
+        env_block = get_env_info()
+        context_text = (context_text + "\n\n" if context_text else "") + f"System environment:\n{env_block}"
+
     explain_error(
         error_text,
         model=args.model,
         brief=args.brief or False,
+        terse=args.terse,
         json_output=args.json_output,
         fix=args.fix,
         lang=args.lang,
@@ -1865,6 +2016,7 @@ def main() -> None:
         issues=args.issues,
         translate=args.translate,
         save_as=args.save_as,
+        output_file=args.output,
     )
 
     check_for_update()
