@@ -70,6 +70,20 @@ Formatting rules:
 - Do not pad your response with unnecessary caveats or disclaimers
 - Be direct and confident in your diagnosis"""
 
+LINT_PROMPT = """You are a senior software engineer performing a code review. When given a piece of code, scan it for potential problems and report them clearly.
+
+For each issue found:
+- **Severity**: 🔴 Critical / 🟡 Warning / 🔵 Info
+- **Line(s)**: reference the relevant line numbers if possible
+- **Issue**: what's wrong or risky
+- **Fix**: concrete suggestion to resolve it
+
+Categories to check: bugs, security vulnerabilities, performance issues, error handling gaps, deprecated APIs, undefined behaviour, resource leaks, type errors, and style issues that could cause confusion.
+
+If the code looks clean, say so briefly. Be direct — don't invent issues that aren't there.
+
+Output as markdown."""
+
 CODE_PROMPT = """You are a senior software engineer and excellent technical communicator. When given a piece of code, you will:
 
 1. **What it does** — A plain-English summary of the code's purpose (1-2 sentences).
@@ -787,6 +801,51 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
             console.print("\n[dim]Stopped watching.[/dim]")
 
 
+def lint_file(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Scan a code file for potential bugs and issues."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    code = read_file(path)
+    lang_hint = f" (language: {lang})" if lang else ""
+    prompt = f"Please review this code{lang_hint} for potential issues:\n\n```\n{code}\n```"
+
+    console.rule(f"[bold cyan]errex — Lint: {Path(path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic()
+    collected = []
+    input_tokens = output_tokens = 0
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            system=[{"type": "text", "text": LINT_PROMPT, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        show_token_usage(input_tokens, output_tokens)
+    console.rule(style="dim")
+    print()
+
+    save_history(code, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
 def explain_code(path: str, model: str, lang: str | None, copy: bool, show_tokens: bool, chat: bool) -> None:
     """Explain what a piece of code does."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -865,6 +924,7 @@ def main() -> None:
     parser.add_argument("--update", action="store_true", help="check for a newer version of errex")
     parser.add_argument("--explain-code", metavar="FILE", dest="explain_code", help="explain what a piece of code does")
     parser.add_argument("--issues", action="store_true", help="search GitHub Issues for similar errors after explaining")
+    parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -887,6 +947,16 @@ def main() -> None:
 
     if args.scan:
         scan_logs()
+        return
+
+    if args.lint:
+        lint_file(
+            args.lint,
+            model=args.model,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
         return
 
     if args.explain_code:
