@@ -13,6 +13,8 @@ Requirements: pip install anthropic
 Set ANTHROPIC_API_KEY in your environment.
 """
 
+from __future__ import annotations
+
 import sys
 import os
 import argparse
