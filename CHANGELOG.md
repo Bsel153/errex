@@ -2,6 +2,25 @@
 
 All notable changes to errex are documented here.
 
+## [0.15.0] — 2026-05-28
+### Added
+- `--explain-cron EXPR`: explain a cron expression in plain English; standard patterns answered locally, complex ones via Claude
+- `--snippet`: strip stdlib/site-packages/node_modules frames from a traceback before explaining
+- `--debug`: dry run — print the prompt that would be sent to Claude, then exit without an API call
+- `--list-profiles`: list all named profiles in `~/.errexrc`
+- `--explain-http CODE`: explain HTTP status codes; 35+ known codes answered instantly
+- `--add-note TEXT`: append a personal note to the last history entry
+- `--format-json`: parse a JSON error blob and reformat it before explaining
+- `--interactive`: numbered history picker — browse and select entries to view
+- `--ci`: CI mode — forces no-color + terse, GitHub Actions `::error::` annotations, exits 1
+- `--rate SCORE`: rate the last explanation 1–5; stored in history, average shown in `--stats`
+- `--profile NAME`: load a named config profile from `~/.errexrc`; CLI flags always win
+- `--bulk FILE`: explain multiple errors from a file separated by blank lines
+- `--explain-exit CODE`: explain shell exit codes; 30+ known codes answered instantly
+- `--webhook URL`: POST explanation JSON to Slack, Discord, or any generic endpoint
+- `--find-name NAME`: retrieve history entries saved with `--save-as`
+- `--timeout N`: set API request timeout in seconds (default: 30)
+
 ## [0.11.0] — 2026-05-28
 ### Added
 - `--output FILE`: save the explanation to a `.txt` or `.md` file alongside printing
