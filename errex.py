@@ -233,6 +233,47 @@ def extract_error_type(error_text: str) -> str:
     return "unknown"
 
 
+def find_similar(error_text: str, top_n: int = 5) -> None:
+    """Search history for past errors similar to the current one."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    current_fp = _error_fingerprint(error_text)
+    current_words = set(current_fp.lower().split())
+
+    def jaccard(entry: dict) -> float:
+        fp = _error_fingerprint(entry.get("error", ""))
+        words = set(fp.lower().split())
+        if not current_words or not words:
+            return 0.0
+        return len(current_words & words) / len(current_words | words)
+
+    scored = sorted(((jaccard(e), e) for e in entries), reverse=True, key=lambda x: x[0])
+    top = [(s, e) for s, e in scored if s > 0.0][:top_n]
+
+    if not top:
+        console.print("[yellow]No similar errors found in history.[/yellow]")
+        return
+
+    console.rule("[bold cyan]errex — Similar Past Errors[/bold cyan]")
+    console.print(f"[dim]Matched {len(top)} result(s) from history[/dim]\n")
+
+    for score, entry in top:
+        label = f"  {entry['timestamp'][:19]}  ·  {entry['model']}  ·  {score:.0%} match"
+        console.rule(label, style="dim")
+        console.print(f"[bold red]Error:[/bold red] {entry['error'][:80]}{'...' if len(entry['error']) > 80 else ''}\n")
+        console.print(Markdown(entry["explanation"]))
+        console.print()
+
+
 def export_history(output_path: str, fmt: str) -> None:
     """Export history to an HTML or Markdown file."""
     if not HISTORY_FILE.exists():
@@ -1016,6 +1057,7 @@ def main() -> None:
     parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
+    parser.add_argument("--similar", action="store_true", help="find past errors in your history that are similar to the current one")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -1087,6 +1129,10 @@ def main() -> None:
     if not error_text:
         parser.print_usage(sys.stderr)
         sys.exit(1)
+
+    if args.similar:
+        find_similar(error_text)
+        return
 
     context_text = read_file(args.context) if args.context else None
 
