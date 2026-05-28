@@ -233,6 +233,48 @@ def extract_error_type(error_text: str) -> str:
     return "unknown"
 
 
+def ask_about_last(question: str, model: str, show_tokens: bool, copy: bool) -> None:
+    """Ask a follow-up question about the last error in history."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet — run errex on an error first.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    last = entries[-1]
+    error = last.get("error", "")
+    explanation = last.get("explanation", "")
+    ts = last.get("timestamp", "")[:19]
+
+    console.print(f"[dim]Context:[/dim] {error[:80]}{'...' if len(error) > 80 else ''}  [dim]({ts})[/dim]\n")
+
+    messages = [
+        {"role": "user", "content": f"Please explain this error:\n\n```\n{error}\n```"},
+        {"role": "assistant", "content": explanation},
+        {"role": "user", "content": question},
+    ]
+
+    console.rule("[bold cyan]errex — Follow-up[/bold cyan]")
+    print()
+
+    response, in_tok, out_tok = call_claude(error, model=model, messages=messages)
+
+    print()
+    if show_tokens:
+        show_token_usage(in_tok, out_tok)
+    console.rule(style="dim")
+    print()
+
+    save_history(error, response, model, False)
+    if copy:
+        copy_to_clipboard(response)
+
+
 def export_history(output_path: str, fmt: str) -> None:
     """Export history to an HTML or Markdown file."""
     if not HISTORY_FILE.exists():
@@ -1016,8 +1058,18 @@ def main() -> None:
     parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
+    parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.ask:
+        ask_about_last(
+            args.ask,
+            model=args.model,
+            show_tokens=args.tokens,
+            copy=args.copy or False,
+        )
+        return
 
     if args.stats:
         show_stats()
