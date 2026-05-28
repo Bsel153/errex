@@ -163,6 +163,43 @@ _SIGNAL_NAMES: dict[int, str] = {
     17: "SIGCHLD", 18: "SIGCONT", 19: "SIGSTOP", 20: "SIGTSTP",
 }
 
+HTTP_CODES: dict[int, tuple[str, str]] = {
+    100: ("Continue", "Server received headers; client should proceed to send the body."),
+    101: ("Switching Protocols", "Server is switching protocols as requested (e.g. upgrading to WebSocket)."),
+    200: ("OK", "Request succeeded. The response body contains the result."),
+    201: ("Created", "Request succeeded and a new resource was created. Location header points to it."),
+    202: ("Accepted", "Request accepted for async processing — not yet complete."),
+    204: ("No Content", "Request succeeded but no response body — normal after DELETE or PUT."),
+    206: ("Partial Content", "Server is returning part of the resource due to a Range header."),
+    301: ("Moved Permanently", "Resource has permanently moved to the URL in Location. Update your links."),
+    302: ("Found (Temporary Redirect)", "Resource is temporarily elsewhere. Use the original URL next time."),
+    303: ("See Other", "Redirect to a different URI using GET — common after a POST."),
+    304: ("Not Modified", "Cached version is still valid — use your cached copy."),
+    307: ("Temporary Redirect", "Like 302, but the HTTP method must not change on redirect."),
+    308: ("Permanent Redirect", "Like 301, but the HTTP method must not change on redirect."),
+    400: ("Bad Request", "Server couldn't parse the request. Check your body, headers, or query params for syntax errors."),
+    401: ("Unauthorized", "Authentication required. Missing or invalid API key, token, or credentials."),
+    402: ("Payment Required", "Payment or quota needed to access this resource."),
+    403: ("Forbidden", "Server understood the request but your credentials lack permission for this resource."),
+    404: ("Not Found", "No resource at this URL. Check for typos or whether it was deleted."),
+    405: ("Method Not Allowed", "This endpoint doesn't support the HTTP method you used (GET/POST/PUT/etc.)."),
+    408: ("Request Timeout", "Server timed out waiting for your request. Client sent data too slowly."),
+    409: ("Conflict", "Request conflicts with current server state — duplicate resource or version mismatch."),
+    410: ("Gone", "Resource permanently deleted and won't return (stricter than 404)."),
+    413: ("Payload Too Large", "Request body exceeds the server's size limit. Reduce payload or chunk the upload."),
+    415: ("Unsupported Media Type", "Content-Type is not supported. Check you're sending the right format (e.g. application/json)."),
+    422: ("Unprocessable Entity", "Request is well-formed but has semantic errors — common for API validation failures."),
+    429: ("Too Many Requests", "Rate limit hit. Check the Retry-After header and back off before retrying."),
+    431: ("Request Header Fields Too Large", "One or more request headers are too large for the server to accept."),
+    500: ("Internal Server Error", "Unexpected server-side error. Check server logs — this is a bug on the server."),
+    501: ("Not Implemented", "Server doesn't support the functionality needed for this request."),
+    502: ("Bad Gateway", "Gateway got an invalid response from upstream. Often a deploy issue or upstream outage."),
+    503: ("Service Unavailable", "Server temporarily overloaded or down for maintenance. Retry with exponential backoff."),
+    504: ("Gateway Timeout", "Gateway didn't get a response from upstream in time. Upstream may be slow or down."),
+    507: ("Insufficient Storage", "Server cannot store the data needed to complete the request."),
+    508: ("Loop Detected", "Server detected an infinite loop while processing (WebDAV)."),
+}
+
 
 def load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -1616,6 +1653,164 @@ def run_bulk(
         )
 
 
+def explain_http(code: int, model: str, copy: bool) -> None:
+    """Explain an HTTP status code — known codes answered locally, unknowns via Claude."""
+    console.rule(f"[bold cyan]errex — HTTP {code}[/bold cyan]")
+    console.print()
+
+    if code in HTTP_CODES:
+        name, explanation = HTTP_CODES[code]
+        category = {1: "Informational", 2: "Success", 3: "Redirection", 4: "Client Error", 5: "Server Error"}.get(code // 100, "Unknown")
+        console.print(f"[bold red]HTTP {code}:[/bold red]  [bold]{name}[/bold]  [dim]({category})[/dim]\n")
+        console.print(explanation)
+        console.print()
+        console.rule(style="dim")
+        if copy:
+            copy_to_clipboard(f"HTTP {code}: {name}\n{explanation}")
+        return
+
+    console.print(f"[dim]Non-standard status code — asking Claude…[/dim]\n")
+    prompt = (
+        f"Explain HTTP status code {code}. Cover: what it means, which servers or frameworks use it, "
+        f"common causes, and how to handle or fix it. Be concise and use markdown."
+    )
+    call_claude(str(code), model=model, messages=[{"role": "user", "content": prompt}])
+    print()
+    console.rule(style="dim")
+
+
+def add_note(note: str) -> None:
+    """Append a personal note to the last history entry."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        lines = [l for l in f.readlines() if l.strip()]
+
+    if not lines:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    last = json.loads(lines[-1])
+    existing = last.get("notes", "")
+    last["notes"] = (existing + "\n" + note).strip() if existing else note
+    lines[-1] = json.dumps(last) + "\n"
+
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    err_snippet = last.get("error", "")[:60]
+    console.print(f"[green]Note added[/green]  [dim]{err_snippet}[/dim]")
+    console.print(f"[dim]Note:[/dim] {note}")
+
+
+def format_json_error(text: str) -> str:
+    """Parse a JSON error blob and reformat it as readable text for Claude."""
+    stripped = text.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return text
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return text
+
+    if isinstance(data, list):
+        return json.dumps(data, indent=2)
+
+    if not isinstance(data, dict):
+        return str(data)
+
+    lines = []
+    priority = ["error", "message", "msg", "reason", "detail", "details",
+                "description", "stack", "stackTrace", "stack_trace", "trace",
+                "exception", "code", "status", "type", "name", "cause"]
+    shown: set[str] = set()
+
+    for key in priority:
+        if key in data:
+            val = data[key]
+            shown.add(key)
+            if isinstance(val, str):
+                lines.append(f"{key}: {val}")
+            elif isinstance(val, (int, float, bool)):
+                lines.append(f"{key}: {val}")
+            else:
+                lines.append(f"{key}:\n{json.dumps(val, indent=2)}")
+
+    for key, val in data.items():
+        if key not in shown:
+            if isinstance(val, str) and len(val) <= 200:
+                lines.append(f"{key}: {val}")
+            elif isinstance(val, (int, float, bool)):
+                lines.append(f"{key}: {val}")
+
+    return "\n".join(lines) if lines else json.dumps(data, indent=2)
+
+
+def interactive_history(n: int = 15) -> None:
+    """Show a numbered list of recent history entries; pick one to view."""
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    recent = entries[-n:]
+
+    console.rule("[bold cyan]errex — Interactive History[/bold cyan]")
+    console.print()
+
+    table = Table(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Date", style="dim", width=17)
+    table.add_column("Model", style="dim", width=22)
+    table.add_column("Error", style="red")
+
+    for i, entry in enumerate(recent, 1):
+        ts = entry.get("timestamp", "")[:16]
+        model = entry.get("model", "")
+        error = entry.get("error", "")[:65]
+        name_tag = f"[{entry['name']}] " if entry.get("name") else ""
+        table.add_row(str(i), ts, model, f"{name_tag}{error}")
+
+    console.print(table)
+    console.print()
+
+    try:
+        choice = input(f"Pick an entry (1–{len(recent)}, or q to quit): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[dim]Cancelled.[/dim]")
+        return
+
+    if choice.lower() in ("q", ""):
+        return
+
+    try:
+        idx = int(choice) - 1
+        if not 0 <= idx < len(recent):
+            console.print("[red]Invalid choice.[/red]")
+            return
+    except ValueError:
+        console.print("[red]Invalid input.[/red]")
+        return
+
+    entry = recent[idx]
+    console.print()
+    label = f"  {entry['timestamp'][:19]}  ·  {entry['model']}{'  ·  brief' if entry.get('brief') else ''}"
+    console.rule(label, style="dim")
+    console.print(f"\n[bold red]Error:[/bold red] {entry['error']}\n")
+    if entry.get("notes"):
+        console.print(f"[dim]Note:[/dim] {entry['notes']}\n")
+    console.print(Markdown(entry["explanation"]))
+    console.print()
+
+
 def run_doctor() -> None:
     """Check that errex is set up and working correctly."""
     console.rule("[bold cyan]errex — Doctor[/bold cyan]")
@@ -2038,6 +2233,14 @@ def main() -> None:
                         help="explain multiple errors from a file separated by blank lines")
     parser.add_argument("--explain-exit", metavar="CODE", type=int, dest="explain_exit",
                         help="explain a shell exit code (e.g. --explain-exit 139 → segfault)")
+    parser.add_argument("--explain-http", metavar="CODE", type=int, dest="explain_http",
+                        help="explain an HTTP status code (e.g. --explain-http 429)")
+    parser.add_argument("--add-note", metavar="TEXT", dest="add_note",
+                        help="append a personal note to the last history entry")
+    parser.add_argument("--format-json", action="store_true", dest="format_json",
+                        help="parse the error as JSON and reformat it before explaining")
+    parser.add_argument("--interactive", action="store_true",
+                        help="browse recent history with a numbered picker")
     parser.add_argument("--webhook", metavar="URL",
                         help="POST the explanation as JSON to a URL (Slack, Discord, or generic)")
     parser.add_argument("--find-name", metavar="NAME", dest="find_name",
@@ -2140,6 +2343,18 @@ def main() -> None:
 
     if args.explain_exit is not None:
         explain_exit_code(args.explain_exit, model=args.model, copy=args.copy or False)
+        return
+
+    if args.explain_http is not None:
+        explain_http(args.explain_http, model=args.model, copy=args.copy or False)
+        return
+
+    if args.add_note:
+        add_note(args.add_note)
+        return
+
+    if args.interactive:
+        interactive_history()
         return
 
     if args.find_name:
@@ -2277,6 +2492,12 @@ def main() -> None:
     if args.env:
         env_block = get_env_info()
         context_text = (context_text + "\n\n" if context_text else "") + f"System environment:\n{env_block}"
+
+    if args.format_json:
+        formatted = format_json_error(error_text)
+        if formatted != error_text:
+            err_console.print("[dim](JSON parsed and reformatted)[/dim]")
+        error_text = formatted
 
     if args.ci and os.environ.get("GITHUB_ACTIONS"):
         first_line = error_text.splitlines()[0][:200] if error_text else "error"
