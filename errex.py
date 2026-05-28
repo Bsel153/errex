@@ -102,15 +102,92 @@ function errex-last() {
 """
 
 
+CONFIG_DEFAULTS: dict = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
+CONFIG_TYPES: dict = {"model": str, "brief": bool, "lang": str, "copy": bool}
+
+
 def load_config() -> dict:
-    defaults = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
-                return {**defaults, **json.load(f)}
+                return {**CONFIG_DEFAULTS, **json.load(f)}
         except (json.JSONDecodeError, OSError):
             pass
-    return defaults
+    return dict(CONFIG_DEFAULTS)
+
+
+def manage_config(assignment: str | None) -> None:
+    """View or set a config value in ~/.errexrc.
+
+    errex --config              → show all settings
+    errex --config model=...    → set a value
+    errex --config lang=null    → clear a value
+    """
+    # Load what's actually in the file (not merged with defaults)
+    file_config: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE) as f:
+                file_config = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if assignment is None:
+        # Show current config
+        console.rule("[bold cyan]errex — Config[/bold cyan]")
+        console.print(f"[dim]{CONFIG_FILE}[/dim]\n")
+        table = Table(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+        table.add_column("Key", style="cyan", min_width=8)
+        table.add_column("Value", min_width=20)
+        table.add_column("Source", style="dim")
+        for key, default in CONFIG_DEFAULTS.items():
+            if key in file_config:
+                table.add_row(key, str(file_config[key]), "~/.errexrc")
+            else:
+                table.add_row(key, str(default), "default")
+        console.print(table)
+        console.print(f"\n[dim]Set a value:   errex --config model=claude-opus-4-7[/dim]")
+        console.print(f"[dim]Clear a value: errex --config lang=null[/dim]")
+        return
+
+    # Parse key=value
+    if "=" not in assignment:
+        err_console.print(f"[red]errex: expected key=value, got: {assignment!r}[/red]")
+        err_console.print(f"[dim]Valid keys: {', '.join(CONFIG_DEFAULTS)}[/dim]")
+        sys.exit(1)
+
+    key, _, raw = assignment.partition("=")
+    key = key.strip()
+    raw = raw.strip()
+
+    if key not in CONFIG_TYPES:
+        err_console.print(f"[red]errex: unknown config key '{key}'[/red]")
+        err_console.print(f"[dim]Valid keys: {', '.join(CONFIG_DEFAULTS)}[/dim]")
+        sys.exit(1)
+
+    if raw.lower() == "null":
+        file_config.pop(key, None)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(file_config, f, indent=2)
+        console.print(f"[green]Cleared[/green] [cyan]{key}[/cyan]  [dim](reset to default: {CONFIG_DEFAULTS[key]})[/dim]")
+        return
+
+    expected = CONFIG_TYPES[key]
+    if expected is bool:
+        if raw.lower() in ("true", "1", "yes"):
+            value: bool | str | None = True
+        elif raw.lower() in ("false", "0", "no"):
+            value = False
+        else:
+            err_console.print(f"[red]errex: '{key}' expects true/false, got: {raw!r}[/red]")
+            sys.exit(1)
+    else:
+        value = raw
+
+    file_config[key] = value
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(file_config, f, indent=2)
+    console.print(f"[green]Set[/green] [cyan]{key}[/cyan] = [bold]{value}[/bold]  [dim]({CONFIG_FILE})[/dim]")
 
 
 def read_file(path: str) -> str:
@@ -1059,8 +1136,14 @@ def main() -> None:
     parser.add_argument("--export", metavar="FILE", help="export history to a file (.html or .md)")
     parser.add_argument("--export-format", choices=["html", "md"], default=None, help="format for --export (auto-detected from extension if omitted)")
     parser.add_argument("--ask", metavar="QUESTION", help="ask a follow-up question about the last error in history")
+    parser.add_argument("--config", nargs="?", const=None, metavar="KEY=VALUE", help="view or set config (e.g. --config model=claude-opus-4-7); omit value to show all settings")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if "--config" in sys.argv:
+        raw_config_arg = args.config  # None means "show", str means "set"
+        manage_config(raw_config_arg)
+        return
 
     if args.ask:
         ask_about_last(
