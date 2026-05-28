@@ -36,12 +36,23 @@ errex traceback.txt
 cat error.log | errex
 errex < error.log
 
-# Use a different Claude model
-errex --model claude-opus-4-7 traceback.txt
-
 # One-paragraph summary instead of full analysis
 errex --brief traceback.txt
+
+# Hint the language when the error is ambiguous
+errex --lang rust traceback.txt
+
+# Copy the explanation to the clipboard
+errex --copy traceback.txt
+
+# Structured JSON output (error_type, root_cause, fix_steps, gotchas)
+errex --json traceback.txt
+
+# Use a different Claude model
+errex --model claude-opus-4-7 traceback.txt
 ```
+
+Past explanations are saved to `~/.errex_history` (one JSON object per line).
 
 ## What you get
 
