@@ -84,16 +84,39 @@ errex --watch server.log     # tail a log, auto-explain errors
 | `--chat` | Stay in a Q&A loop after the explanation |
 | `--notify` | Send a desktop notification when the explanation is ready |
 
+### Code tools
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-code FILE` | Walk through what a piece of code does in plain English |
+| `--lint FILE` | Scan a code file for bugs, security issues, and anti-patterns |
+| `--test-gen FILE` | Generate a test case for a code file; pipe an error to reproduce the bug |
+| `--explain-diff [FILE]` | Explain a git diff — pipe `git diff \| errex --explain-diff` or pass a `.patch` file |
+| `--grep PATTERN FILE` | Filter a log file by regex, then explain matching lines |
+
+### Translation & output
+
+| Flag | What it does |
+|------|-------------|
+| `--translate LANG` | Respond in a spoken language (`--translate Spanish`, `--translate Japanese`) |
+| `--save-as NAME` | Tag this explanation with a name for quick retrieval |
+| `--json` | Structured JSON output: `error_type`, `root_cause`, `fix_steps`, `gotchas` |
+| `--fix` | Output only the fix command, no explanation |
+| `--copy` | Copy the explanation to the clipboard |
+| `--share` | Post the explanation to paste.rs and print a shareable link |
+| `--tokens` | Show input/output token counts after each explanation |
+
 ### Setup & config
 
 | Flag | What it does |
 |------|-------------|
 | `--config [key=value]` | View or edit `~/.errexrc` — e.g. `--config model=claude-opus-4-7` |
 | `--setup` | First-run wizard: check API key, detect languages, write config, install shell integration |
+| `--doctor` | Health check: verify API key, connectivity, config, and version |
+| `--completion bash\|zsh` | Print a shell completion script (`source <(errex --completion zsh)`) |
 | `--scan` | Scan common log locations for recent error files and pick one to explain |
 | `--install-shell` | Add `errex-last()` to your shell — run it after any failed command |
 | `--web` | Launch a local web UI at `http://localhost:7337` |
-| `--tokens` | Show input/output token counts after each explanation |
 | `--update` | Check PyPI for a newer version |
 | `--version` | Show the installed version |
 
