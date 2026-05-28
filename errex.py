@@ -200,6 +200,51 @@ HTTP_CODES: dict[int, tuple[str, str]] = {
     508: ("Loop Detected", "Server detected an infinite loop while processing (WebDAV)."),
 }
 
+ENV_VARS: dict[str, str] = {
+    "PATH": "Colon-separated list of directories the shell searches for executables. If a command isn't found, its directory is probably missing from PATH.",
+    "HOME": "The current user's home directory (/Users/name on macOS, /home/name on Linux).",
+    "SHELL": "Path to the user's default shell (e.g. /bin/zsh, /bin/bash).",
+    "USER": "Username of the currently logged-in user.",
+    "TERM": "Terminal type (e.g. xterm-256color). Programs use this to decide how to render colour and cursor movement.",
+    "EDITOR": "The user's preferred text editor. Used by git commit, crontab -e, etc.",
+    "LANG": "Locale setting for language, encoding, and formatting (e.g. en_US.UTF-8). Affects sorting, date display, and text encoding.",
+    "TZ": "Timezone (e.g. America/New_York, UTC). Affects timestamps in logs and date functions.",
+    "TMPDIR": "Directory for temporary files. macOS default: /var/folders/…; Linux default: /tmp.",
+    "CI": "Set to 'true' by most CI platforms (GitHub Actions, CircleCI, Travis). Many tools disable colours and pagination when CI is set.",
+    "GITHUB_ACTIONS": "Set to 'true' by GitHub Actions. Enables workflow-specific features like ::error:: annotations.",
+    "DEBUG": "Enables debug mode in many frameworks (Django, Flask, Express). Often shows stack traces and verbose logging.",
+    "PORT": "Network port a server should listen on. Commonly set by hosting platforms (Heroku, Railway, Render) to override the app's default.",
+    "HOST": "Network interface a server binds to. '0.0.0.0' = all interfaces; '127.0.0.1' = localhost only.",
+    "SECRET_KEY": "Cryptographic secret used by web frameworks for signing cookies and tokens. Must be long, random, and never committed to source control.",
+    "DATABASE_URL": "Database connection string used by many frameworks. Format: dialect://user:pass@host:port/dbname.",
+    "PYTHONPATH": "Colon-separated directories Python adds to sys.path for module search. Use to make custom modules importable without installing them.",
+    "PYTHONDONTWRITEBYTECODE": "If set, Python won't write .pyc bytecode cache files. Set to '1' to keep directories clean.",
+    "PYTHONUNBUFFERED": "If set, Python stdout/stderr are unbuffered — output appears immediately. Essential for Docker logs and CI.",
+    "VIRTUAL_ENV": "Set by virtualenv/venv to the path of the active virtual environment.",
+    "CONDA_DEFAULT_ENV": "Name of the currently active conda environment.",
+    "NODE_ENV": "Tells Node.js apps which environment they're in: 'development', 'production', or 'test'. Many libraries change behaviour based on this.",
+    "NODE_PATH": "Directories Node.js searches for modules beyond node_modules.",
+    "GOPATH": "Go workspace root. Mostly superseded by Go modules (go.mod) but still read by some tools.",
+    "GOROOT": "Installation directory of the Go toolchain — where the go binary and stdlib live.",
+    "GOMODCACHE": "Where Go stores downloaded module dependencies (default: $GOPATH/pkg/mod).",
+    "JAVA_HOME": "JDK installation directory. Maven, Gradle, and many servers read this to find the Java runtime.",
+    "CLASSPATH": "Colon-separated directories and JARs Java searches for classes at compile/run time.",
+    "ANTHROPIC_API_KEY": "Your Anthropic API key for accessing Claude models. Get one at console.anthropic.com.",
+    "OPENAI_API_KEY": "Your OpenAI API key for accessing GPT models.",
+    "AWS_ACCESS_KEY_ID": "Access key ID part of AWS credentials. Used with AWS_SECRET_ACCESS_KEY to authenticate with AWS services.",
+    "AWS_SECRET_ACCESS_KEY": "Secret key part of AWS credentials. Never commit to source control.",
+    "AWS_DEFAULT_REGION": "Default AWS region for CLI commands and SDK calls (e.g. us-east-1, eu-west-1).",
+    "DOCKER_HOST": "The Docker daemon socket or TCP address. Defaults to unix:///var/run/docker.sock.",
+    "KUBECONFIG": "Path to the Kubernetes config file. Defaults to ~/.kube/config.",
+    "XDG_CONFIG_HOME": "Where user config files are stored on Linux (default: ~/.config). Many apps follow the XDG Base Directory spec.",
+    "SSL_CERT_FILE": "Path to a CA certificate bundle. Set when connecting to servers with custom or self-signed certificates.",
+    "HTTP_PROXY": "Proxy server for HTTP connections (e.g. http://proxy.company.com:8080).",
+    "HTTPS_PROXY": "Proxy server for HTTPS connections.",
+    "NO_PROXY": "Comma-separated hosts that bypass the proxy.",
+    "GIT_AUTHOR_NAME": "Overrides the author name for git commits (normally from ~/.gitconfig).",
+    "GIT_AUTHOR_EMAIL": "Overrides the author email for git commits.",
+}
+
 _CRON_DOW = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
 _CRON_MONTH = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
                7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
@@ -1206,6 +1251,7 @@ def call_claude(
     messages: list | None = None,
     translate: str | None = None,
     dry_run: bool = False,
+    top_n: int | None = None,
 ) -> tuple[str, int, int]:
     """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1216,6 +1262,7 @@ def call_claude(
     lang_hint = f" (language: {lang})" if lang else ""
     context_block = f"\n\nFor context, here is the relevant code:\n```\n{context}\n```" if context else ""
     translate_suffix = f"\n\nRespond entirely in {translate}." if translate else ""
+    top_n_suffix = f"\n\nLimit your root cause analysis to the top {top_n} most likely causes only." if top_n else ""
 
     if messages is None:
         if fix:
@@ -1231,7 +1278,7 @@ def call_claude(
         elif brief:
             prompt = f"In one short paragraph, tell me: what this error{lang_hint} is, the most likely cause, and how to fix it.\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         else:
-            prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
+            prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}{translate_suffix}{top_n_suffix}"
         messages = [{"role": "user", "content": prompt}]
 
     if dry_run:
@@ -1317,6 +1364,7 @@ def explain_error(
     output_file: str | None = None,
     webhook: str | None = None,
     dry_run: bool = False,
+    top_n: int | None = None,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output and not dry_run:
@@ -1326,6 +1374,7 @@ def explain_error(
     response, in_tok, out_tok = call_claude(
         error_text, model=model, brief=brief, terse=terse, json_output=json_output,
         fix=fix, lang=lang, context=context, translate=translate, dry_run=dry_run,
+        top_n=top_n,
     )
 
     if dry_run:
@@ -2018,6 +2067,162 @@ def list_profiles() -> None:
     console.print(f"\n[dim]Use with: errex --profile NAME[/dim]")
 
 
+def explain_env_var(var: str, model: str, copy: bool) -> None:
+    """Explain an environment variable — known ones answered locally, unknowns via Claude."""
+    console.rule(f"[bold cyan]errex — Env: {var}[/bold cyan]")
+    console.print()
+
+    lookup = ENV_VARS.get(var.upper()) or ENV_VARS.get(var)
+    if lookup:
+        console.print(f"[bold cyan]{var}[/bold cyan]\n")
+        console.print(lookup)
+        console.print()
+        # Also show current value if set
+        current = os.environ.get(var)
+        if current is not None:
+            display = current if len(current) <= 80 else current[:77] + "…"
+            console.print(f"[dim]Current value:[/dim] {display}")
+        else:
+            console.print(f"[dim]Not currently set in this environment.[/dim]")
+        console.print()
+        console.rule(style="dim")
+        if copy:
+            copy_to_clipboard(f"{var}: {lookup}")
+        return
+
+    console.print(f"[dim]Unknown variable — asking Claude…[/dim]\n")
+    prompt = (
+        f"Explain the environment variable `{var}`. Cover: what it does, which tools or "
+        f"languages use it, common values, and any security or performance implications. "
+        f"Be concise and use markdown."
+    )
+    call_claude(var, model=model, messages=[{"role": "user", "content": prompt}])
+    print()
+    console.rule(style="dim")
+
+
+def open_last_in_browser() -> None:
+    """Export the last history entry as HTML and open it in the default browser."""
+    import tempfile
+    import webbrowser
+
+    if not HISTORY_FILE.exists():
+        console.print("[yellow]No history yet.[/yellow]")
+        sys.exit(0)
+
+    with open(HISTORY_FILE, encoding="utf-8") as f:
+        entries = [json.loads(line) for line in f if line.strip()]
+
+    if not entries:
+        console.print("[yellow]History is empty.[/yellow]")
+        sys.exit(0)
+
+    e = entries[-1]
+    ts = e.get("timestamp", "")[:19]
+    model = e.get("model", "")
+    error = e.get("error", "")
+    explanation = e.get("explanation", "")
+    name = e.get("name", "")
+    notes = e.get("notes", "")
+    rating = e.get("rating")
+
+    stars = ("★" * rating + "☆" * (5 - rating)) if rating else ""
+    name_html = f" · <strong>{name}</strong>" if name else ""
+    rating_html = f" · {stars}" if stars else ""
+    notes_html = f'<div class="note">📝 {notes}</div>' if notes else ""
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>errex — {ts}</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  body{{font-family:-apple-system,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem;background:#0f1117;color:#e2e8f0}}
+  h1{{color:#7dd3fc;font-size:1.1rem;margin-bottom:.25rem}}
+  .meta{{color:#64748b;font-size:.85rem;margin-bottom:1.25rem}}
+  .err{{background:#1e2130;border-radius:6px;padding:.75rem;font-family:monospace;font-size:.85rem;color:#f87171;white-space:pre-wrap;margin-bottom:1.5rem}}
+  .note{{background:#1e3a5f;border-left:3px solid #60a5fa;padding:.5rem 1rem;border-radius:4px;margin:1rem 0;font-size:.9rem}}
+  .explanation{{line-height:1.7}}
+  h2,h3{{color:#7dd3fc}} code{{background:#1e2130;padding:.1em .4em;border-radius:4px;color:#86efac}}
+  pre{{background:#1e2130;padding:1rem;border-radius:6px;overflow-x:auto}}
+</style>
+</head>
+<body>
+<h1>errex — Error Explanation</h1>
+<div class="meta">{ts} · {model}{name_html}{rating_html}</div>
+<div class="err">{error}</div>
+{notes_html}
+<div class="explanation" id="c"></div>
+<script>document.getElementById('c').innerHTML=marked.parse({json.dumps(explanation)});</script>
+</body></html>"""
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
+        f.write(html)
+        tmp = f.name
+
+    webbrowser.open(f"file://{tmp}")
+    console.print(f"[green]Opened in browser[/green] [dim]({tmp})[/dim]")
+
+
+def rerun_last_command(model: str, brief: bool, lang: str | None, copy: bool, show_tokens: bool) -> None:
+    """Read the last shell command, re-run it, and explain if it fails."""
+    shell = os.environ.get("SHELL", "")
+    cmd: str | None = None
+
+    if "zsh" in shell:
+        histfile = Path(os.environ.get("HISTFILE", str(Path.home() / ".zsh_history")))
+        if histfile.exists():
+            content = histfile.read_text(encoding="utf-8", errors="replace")
+            for line in reversed(content.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith(": ") and ";" in line:
+                    line = line.split(";", 1)[1].strip()
+                if line and not line.startswith("errex"):
+                    cmd = line
+                    break
+    elif "bash" in shell:
+        histfile = Path(os.environ.get("HISTFILE", str(Path.home() / ".bash_history")))
+        if histfile.exists():
+            for line in reversed(histfile.read_text(errors="replace").splitlines()):
+                line = line.strip()
+                if line and not line.startswith("errex") and not line.startswith("#"):
+                    cmd = line
+                    break
+
+    if not cmd:
+        err_console.print("[red]errex: could not read last command from shell history.[/red]")
+        err_console.print("[dim]Tip: errex --install-shell sets up errex-last() which works more reliably.[/dim]")
+        sys.exit(1)
+
+    console.print(f"[bold]Re-running:[/bold] [cyan]{cmd}[/cyan]")
+    try:
+        ans = input("Proceed? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[dim]Cancelled.[/dim]")
+        return
+    if ans not in ("", "y"):
+        console.print("[dim]Cancelled.[/dim]")
+        return
+
+    console.print()
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    output = (result.stdout + "\n" + result.stderr).strip()
+
+    if result.returncode == 0:
+        console.print("[green]Command succeeded (exit 0) — nothing to explain.[/green]")
+        return
+
+    console.print(f"[yellow]Failed (exit {result.returncode})[/yellow]\n")
+    if not output:
+        console.print("[dim]No output captured.[/dim]")
+        return
+
+    explain_error(output, model=model, brief=brief, lang=lang, copy=copy, show_tokens=show_tokens)
+
+
 def run_doctor() -> None:
     """Check that errex is set up and working correctly."""
     console.rule("[bold cyan]errex — Doctor[/bold cyan]")
@@ -2450,6 +2655,16 @@ def main() -> None:
                         help="dry run: print the prompt that would be sent to Claude, then exit")
     parser.add_argument("--list-profiles", action="store_true", dest="list_profiles",
                         help="list all named profiles in ~/.errexrc")
+    parser.add_argument("--explain-env", metavar="VAR", dest="explain_env",
+                        help="explain an environment variable (e.g. --explain-env PYTHONPATH)")
+    parser.add_argument("--open", action="store_true",
+                        help="export the last explanation as HTML and open it in the browser")
+    parser.add_argument("--rerun", action="store_true",
+                        help="re-run the last shell command and explain if it fails")
+    parser.add_argument("--top", metavar="N", type=int,
+                        help="limit root cause analysis to the top N most likely causes")
+    parser.add_argument("--word-wrap", metavar="N", type=int, dest="word_wrap",
+                        help="set the output console width in characters")
     parser.add_argument("--add-note", metavar="TEXT", dest="add_note",
                         help="append a personal note to the last history entry")
     parser.add_argument("--format-json", action="store_true", dest="format_json",
@@ -2480,9 +2695,10 @@ def main() -> None:
     global console, err_console, API_TIMEOUT
     API_TIMEOUT = args.timeout
 
-    if args.no_color or args.ci:
-        console = Console(no_color=True, highlight=False)
-        err_console = Console(stderr=True, no_color=True, highlight=False)
+    no_color = args.no_color or args.ci
+    width = args.word_wrap or None
+    console = Console(no_color=no_color, highlight=False, width=width) if (no_color or width) else console
+    err_console = Console(stderr=True, no_color=no_color, highlight=False, width=width) if (no_color or width) else err_console
 
     if args.ci:
         args.terse = True
@@ -2570,6 +2786,24 @@ def main() -> None:
 
     if args.list_profiles:
         list_profiles()
+        return
+
+    if args.explain_env:
+        explain_env_var(args.explain_env, model=args.model, copy=args.copy or False)
+        return
+
+    if args.open:
+        open_last_in_browser()
+        return
+
+    if args.rerun:
+        rerun_last_command(
+            model=args.model,
+            brief=args.brief or False,
+            lang=args.lang,
+            copy=args.copy or False,
+            show_tokens=args.tokens,
+        )
         return
 
     if args.add_note:
@@ -2754,6 +2988,7 @@ def main() -> None:
         output_file=args.output,
         webhook=args.webhook,
         dry_run=args.debug,
+        top_n=args.top,
     )
 
     if args.ci:
