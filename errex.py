@@ -27,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 import re
+import urllib.request
+import urllib.error
 from collections import Counter
 
 import anthropic
@@ -110,6 +112,22 @@ def get_error_input(files: list[str]) -> str:
     except EOFError:
         pass
     return "\n".join(lines).strip()
+
+
+def share_explanation(error_text: str, explanation: str) -> None:
+    """Upload explanation to paste.rs and print the shareable URL."""
+    content = f"# Error\n\n```\n{error_text}\n```\n\n# Explanation\n\n{explanation}\n"
+    try:
+        req = urllib.request.Request(
+            "https://paste.rs",
+            data=content.encode("utf-8"),
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            url = resp.read().decode("utf-8").strip()
+        console.print(f"\n[bold green]Shareable link:[/bold green] [cyan]{url}[/cyan]")
+    except urllib.error.URLError as e:
+        err_console.print(f"[yellow]errex: could not create share link — {e}[/yellow]")
 
 
 def copy_to_clipboard(text: str) -> None:
@@ -315,6 +333,7 @@ def explain_error(
     fix: bool = False,
     lang: str | None = None,
     copy: bool = False,
+    share: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
     if not json_output:
@@ -338,6 +357,9 @@ def explain_error(
 
     if copy:
         copy_to_clipboard(response)
+
+    if share:
+        share_explanation(error_text, response)
 
 
 def compare_errors(files: list[str], model: str, lang: str | None, copy: bool) -> None:
@@ -448,6 +470,7 @@ def main() -> None:
     parser.add_argument("--history", nargs="?", const="", metavar="SEARCH", help="show past explanations, optionally filtered by a search term")
     parser.add_argument("--install-shell", action="store_true", help="add errex-last() function to your shell config")
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
+    parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -485,6 +508,7 @@ def main() -> None:
         fix=args.fix,
         lang=args.lang,
         copy=args.copy or False,
+        share=args.share,
     )
 
 
