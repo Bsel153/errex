@@ -2,6 +2,14 @@
 
 All notable changes to errex are documented here.
 
+## [0.16.0] — 2026-05-28
+### Added
+- `--explain-env VAR`: explain environment variables; 40+ known vars answered instantly with current value shown if set
+- `--open`: export last explanation as HTML and open in the default browser
+- `--rerun`: re-run the last shell command and explain if it fails (zsh/bash history)
+- `--top N`: limit root cause analysis to the top N most likely causes
+- `--word-wrap N`: set output console width
+
 ## [0.15.0] — 2026-05-28
 ### Added
 - `--explain-cron EXPR`: explain a cron expression in plain English; standard patterns answered locally, complex ones via Claude
