@@ -15,6 +15,7 @@ Set ANTHROPIC_API_KEY in your environment.
 
 import sys
 import os
+import argparse
 import anthropic
 
 SYSTEM_PROMPT = """You are a senior software engineer with 15+ years of experience across Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, shell scripting, SQL, and cloud infrastructure. You specialize in debugging and explaining errors clearly to developers at all levels.
@@ -39,22 +40,18 @@ Formatting rules:
 - Be direct and confident in your diagnosis"""
 
 
-def get_error_input() -> str:
-    """Read error input from stdin (pipe or redirect), file argument, or interactive paste."""
-    # Case 1: file path argument
-    if len(sys.argv) > 1:
-        path = sys.argv[1]
-        if not os.path.exists(path):
-            print(f"errex: file not found: {path}", file=sys.stderr)
+def get_error_input(file: str | None) -> str:
+    """Read error input from a file argument, piped stdin, or interactive paste."""
+    if file:
+        if not os.path.exists(file):
+            print(f"errex: file not found: {file}", file=sys.stderr)
             sys.exit(1)
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(file, "r", encoding="utf-8", errors="replace") as f:
             return f.read().strip()
 
-    # Case 2: piped stdin
     if not sys.stdin.isatty():
         return sys.stdin.read().strip()
 
-    # Case 3: interactive paste
     print("Paste your error below. Press Ctrl+D (Mac/Linux) or Ctrl+Z+Enter (Windows) when done:\n")
     lines = []
     try:
@@ -66,7 +63,7 @@ def get_error_input() -> str:
     return "\n".join(lines).strip()
 
 
-def explain_error(error_text: str) -> None:
+def explain_error(error_text: str, model: str) -> None:
     """Stream an explanation of the error from Claude."""
     client = anthropic.Anthropic()
 
@@ -75,7 +72,7 @@ def explain_error(error_text: str) -> None:
     print("─" * 60 + "\n")
 
     with client.messages.stream(
-        model="claude-sonnet-4-6",
+        model=model,
         max_tokens=2048,
         system=[
             {
@@ -98,14 +95,25 @@ def explain_error(error_text: str) -> None:
 
 
 def main() -> None:
-    error_text = get_error_input()
+    parser = argparse.ArgumentParser(
+        prog="errex",
+        description="Paste or pipe an error message and get a plain-English explanation.",
+    )
+    parser.add_argument("file", nargs="?", help="path to a file containing the error")
+    parser.add_argument(
+        "--model",
+        default="claude-sonnet-4-6",
+        help="Claude model to use (default: claude-sonnet-4-6)",
+    )
+    args = parser.parse_args()
+
+    error_text = get_error_input(args.file)
 
     if not error_text:
-        print("errex: no error input provided.", file=sys.stderr)
-        print("Usage: errex.py [file] | pipe error via stdin | run interactively", file=sys.stderr)
+        parser.print_usage(sys.stderr)
         sys.exit(1)
 
-    explain_error(error_text)
+    explain_error(error_text, args.model)
 
 
 if __name__ == "__main__":
