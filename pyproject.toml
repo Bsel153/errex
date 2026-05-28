@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "errex"
+version = "0.1.0"
+description = "Paste or pipe any error message and get a plain-English explanation powered by Claude"
+requires-python = ">=3.8"
+dependencies = ["anthropic"]
+
+[project.scripts]
+errex = "errex:main"
