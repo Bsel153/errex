@@ -200,6 +200,17 @@ HTTP_CODES: dict[int, tuple[str, str]] = {
     508: ("Loop Detected", "Server detected an infinite loop while processing (WebDAV)."),
 }
 
+_CRON_DOW = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun"}
+_CRON_MONTH = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+               7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
+
+_STDLIB_RE = re.compile(
+    r'(site-packages|dist-packages|/lib/python\d|\\lib\\python\d'
+    r'|node_modules|/usr/lib/|\\usr\\lib\\'
+    r'|\$GOROOT|/go/pkg/|runtime/panic\.go|<frozen importlib|<string>)',
+    re.IGNORECASE,
+)
+
 
 def load_config() -> dict:
     if CONFIG_FILE.exists():
@@ -1194,6 +1205,7 @@ def call_claude(
     context: str | None = None,
     messages: list | None = None,
     translate: str | None = None,
+    dry_run: bool = False,
 ) -> tuple[str, int, int]:
     """Send error to Claude, stream to stdout, return (response, input_tokens, output_tokens)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -1221,6 +1233,16 @@ def call_claude(
         else:
             prompt = f"Please explain this error{lang_hint}:\n\n```\n{error_text}\n```{context_block}{translate_suffix}"
         messages = [{"role": "user", "content": prompt}]
+
+    if dry_run:
+        console.rule("[bold yellow]errex — Debug (dry run)[/bold yellow]")
+        console.print(f"\n[bold]Model:[/bold] {model}  [bold]Max tokens:[/bold] {64 if terse else (256 if brief else 2048)}\n")
+        console.rule("[dim]System prompt[/dim]")
+        console.print(SYSTEM_PROMPT)
+        console.rule("[dim]User prompt[/dim]")
+        console.print(messages[-1]["content"])
+        console.rule(style="dim")
+        return "", 0, 0
 
     collected = []
     input_tokens = output_tokens = 0
@@ -1294,16 +1316,20 @@ def explain_error(
     save_as: str | None = None,
     output_file: str | None = None,
     webhook: str | None = None,
+    dry_run: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
-    if not json_output:
+    if not json_output and not dry_run:
         console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
 
     response, in_tok, out_tok = call_claude(
         error_text, model=model, brief=brief, terse=terse, json_output=json_output,
-        fix=fix, lang=lang, context=context, translate=translate,
+        fix=fix, lang=lang, context=context, translate=translate, dry_run=dry_run,
     )
+
+    if dry_run:
+        return
 
     if json_output:
         try:
@@ -1811,6 +1837,187 @@ def interactive_history(n: int = 15) -> None:
     console.print()
 
 
+def _cron_local(expr: str) -> str | None:
+    """Return a plain-English description of a 5-field cron expression, or None if too complex."""
+    fields = expr.strip().split()
+    if len(fields) != 5:
+        return None
+    mn, hr, dm, mo, dw = fields
+    if any("-" in f for f in fields):
+        return None  # ranges — delegate to Claude
+
+    def _fmt_time(h: str, m: str) -> str | None:
+        try:
+            hh, mm = int(h), int(m)
+            ampm = "AM" if hh < 12 else "PM"
+            h12 = hh % 12 or 12
+            return f"{h12}:{mm:02d} {ampm}"
+        except ValueError:
+            return None
+
+    def _ordinal(n: int) -> str:
+        s = {1: "st", 2: "nd", 3: "rd"}
+        return f"{n}{s.get(n % 10 if n % 100 not in (11,12,13) else 0, 'th')}"
+
+    # Every minute
+    if all(f == "*" for f in fields):
+        return "Every minute."
+
+    # Every N minutes
+    if mn.startswith("*/") and hr == "*" and dm == "*" and mo == "*" and dw == "*":
+        n = int(mn[2:])
+        return f"Every {n} minute{'s' if n > 1 else ''}."
+
+    # Every hour at :MM (0 * * * *)
+    if not mn.startswith("*/") and hr == "*" and dm == "*" and mo == "*" and dw == "*":
+        try:
+            m = int(mn)
+            return f"Every hour at :{m:02d}." if m else "Every hour."
+        except ValueError:
+            return None
+
+    # Every N hours at :MM
+    if not mn.startswith("*/") and hr.startswith("*/") and dm == "*" and mo == "*" and dw == "*":
+        try:
+            n, m = int(hr[2:]), int(mn)
+            return f"Every {n} hour{'s' if n > 1 else ''} at :{m:02d}."
+        except ValueError:
+            return None
+
+    # Daily at fixed time
+    if dm == "*" and mo == "*" and dw == "*":
+        t = _fmt_time(hr, mn)
+        return f"Every day at {t}." if t else None
+
+    # Specific weekday(s)
+    if dm == "*" and mo == "*" and dw != "*":
+        t = _fmt_time(hr, mn)
+        if not t:
+            return None
+        try:
+            if "," in dw:
+                days = [_CRON_DOW.get(int(d), d) for d in dw.split(",")]
+                day_str = ", ".join(days[:-1]) + " and " + days[-1]
+            else:
+                day_str = _CRON_DOW.get(int(dw), dw)
+            return f"Every {day_str} at {t}."
+        except (ValueError, KeyError):
+            return None
+
+    # Monthly — specific day
+    if dm != "*" and mo == "*" and dw == "*":
+        t = _fmt_time(hr, mn)
+        if not t:
+            return None
+        try:
+            return f"The {_ordinal(int(dm))} of every month at {t}."
+        except ValueError:
+            return None
+
+    # Yearly — specific day + month
+    if dm != "*" and mo != "*" and dw == "*":
+        t = _fmt_time(hr, mn)
+        if not t:
+            return None
+        try:
+            return f"Once a year: {_CRON_MONTH[int(mo)]} {_ordinal(int(dm))} at {t}."
+        except (ValueError, KeyError):
+            return None
+
+    return None
+
+
+def explain_cron(expr: str, model: str, copy: bool) -> None:
+    """Explain a cron expression in plain English."""
+    console.rule(f"[bold cyan]errex — Cron: {expr}[/bold cyan]")
+    console.print()
+
+    local = _cron_local(expr)
+    if local:
+        console.print(f"[bold]{local}[/bold]\n")
+        console.print(f"[dim]Fields: minute  hour  day-of-month  month  day-of-week[/dim]")
+        console.print(f"[dim]        {expr}[/dim]")
+        console.print()
+        console.rule(style="dim")
+        if copy:
+            copy_to_clipboard(f"Cron `{expr}`: {local}")
+        return
+
+    console.print("[dim]Complex expression — asking Claude…[/dim]\n")
+    prompt = (
+        f"Explain this cron expression in plain English: `{expr}`\n\n"
+        f"Cover: when it runs (with concrete examples), what each field means, "
+        f"and any edge cases (e.g. month-end days, DST). Use markdown."
+    )
+    call_claude(expr, model=model, messages=[{"role": "user", "content": prompt}])
+    print()
+    console.rule(style="dim")
+    if copy:
+        copy_to_clipboard(expr)
+
+
+def extract_snippet(error_text: str) -> str:
+    """Strip stdlib/library frames from a traceback, leaving only user-code lines."""
+    lines = error_text.splitlines()
+    result = []
+    skip_next = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if skip_next:
+            skip_next = False
+            continue
+
+        # Python traceback file lines: '  File "path", line N, in func'
+        if stripped.startswith('File "') and '", line' in stripped:
+            if _STDLIB_RE.search(line):
+                skip_next = True  # also drop the code-context line that follows
+                continue
+
+        # Node.js stack frames: '    at Func (path:line:col)'
+        if stripped.startswith("at ") and _STDLIB_RE.search(line):
+            continue
+
+        result.append(line)
+
+    filtered = "\n".join(result).strip()
+    if not filtered or len(result) >= len(lines) - 1:
+        return error_text  # nothing filtered — return as-is
+    return filtered
+
+
+def list_profiles() -> None:
+    """List all named profiles saved in ~/.errexrc."""
+    if not CONFIG_FILE.exists():
+        console.print(f"[yellow]No config file at {CONFIG_FILE}. Run [cyan]errex --setup[/cyan] to create one.[/yellow]")
+        sys.exit(0)
+    try:
+        with open(CONFIG_FILE) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        err_console.print(f"[red]errex: could not read config: {e}[/red]")
+        sys.exit(1)
+
+    profiles = data.get("profiles", {})
+    if not profiles:
+        console.print("[yellow]No profiles saved yet.[/yellow]")
+        console.print('[dim]Add a "profiles" key to ~/.errexrc:[/dim]')
+        console.print('[dim]  {"profiles": {"go": {"lang": "go", "model": "claude-opus-4-7"}}}[/dim]')
+        return
+
+    console.rule("[bold cyan]errex — Profiles[/bold cyan]")
+    console.print(f"[dim]{CONFIG_FILE}[/dim]\n")
+    table = Table(show_header=True, header_style="bold magenta", box=None, show_edge=False)
+    table.add_column("Profile", style="cyan", min_width=12)
+    table.add_column("Settings")
+    for name, settings in profiles.items():
+        parts = "  ".join(f"{k}={v}" for k, v in settings.items())
+        table.add_row(name, parts)
+    console.print(table)
+    console.print(f"\n[dim]Use with: errex --profile NAME[/dim]")
+
+
 def run_doctor() -> None:
     """Check that errex is set up and working correctly."""
     console.rule("[bold cyan]errex — Doctor[/bold cyan]")
@@ -2235,6 +2442,14 @@ def main() -> None:
                         help="explain a shell exit code (e.g. --explain-exit 139 → segfault)")
     parser.add_argument("--explain-http", metavar="CODE", type=int, dest="explain_http",
                         help="explain an HTTP status code (e.g. --explain-http 429)")
+    parser.add_argument("--explain-cron", metavar="EXPR", dest="explain_cron",
+                        help="explain a cron expression (e.g. --explain-cron '0 * * * *')")
+    parser.add_argument("--snippet", action="store_true",
+                        help="strip stdlib/library frames from a traceback before explaining")
+    parser.add_argument("--debug", action="store_true",
+                        help="dry run: print the prompt that would be sent to Claude, then exit")
+    parser.add_argument("--list-profiles", action="store_true", dest="list_profiles",
+                        help="list all named profiles in ~/.errexrc")
     parser.add_argument("--add-note", metavar="TEXT", dest="add_note",
                         help="append a personal note to the last history entry")
     parser.add_argument("--format-json", action="store_true", dest="format_json",
@@ -2347,6 +2562,14 @@ def main() -> None:
 
     if args.explain_http is not None:
         explain_http(args.explain_http, model=args.model, copy=args.copy or False)
+        return
+
+    if args.explain_cron:
+        explain_cron(args.explain_cron, model=args.model, copy=args.copy or False)
+        return
+
+    if args.list_profiles:
+        list_profiles()
         return
 
     if args.add_note:
@@ -2499,6 +2722,14 @@ def main() -> None:
             err_console.print("[dim](JSON parsed and reformatted)[/dim]")
         error_text = formatted
 
+    if args.snippet:
+        trimmed = extract_snippet(error_text)
+        if trimmed != error_text:
+            n_orig = error_text.count("\n") + 1
+            n_trim = trimmed.count("\n") + 1
+            err_console.print(f"[dim](snippet: {n_orig} → {n_trim} lines after stripping library frames)[/dim]")
+        error_text = trimmed
+
     if args.ci and os.environ.get("GITHUB_ACTIONS"):
         first_line = error_text.splitlines()[0][:200] if error_text else "error"
         print(f"::error::{first_line}")
@@ -2522,6 +2753,7 @@ def main() -> None:
         save_as=args.save_as,
         output_file=args.output,
         webhook=args.webhook,
+        dry_run=args.debug,
     )
 
     if args.ci:
