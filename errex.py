@@ -471,11 +471,17 @@ def main() -> None:
     parser.add_argument("--install-shell", action="store_true", help="add errex-last() function to your shell config")
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
+    parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
     if args.stats:
         show_stats()
+        return
+
+    if args.web:
+        from web import serve
+        serve()
         return
 
     if args.install_shell:
