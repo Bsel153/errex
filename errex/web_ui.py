@@ -1,5 +1,6 @@
+# Web UI server — serves the browser interface at http://localhost:7337
 """
-errex web UI — run with: python web.py
+errex web UI — run with: python -m errex.web_ui
 Then open http://localhost:7337 in your browser.
 """
 

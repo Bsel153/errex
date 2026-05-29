@@ -45,7 +45,7 @@ def test_get_error_input_reads_stdin():
 
 def test_save_history_writes_json_line(tmp_path):
     history_file = tmp_path / "history"
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.save_history("some error", "some explanation", "claude-sonnet-4-6", False)
 
     entry = json.loads(history_file.read_text().strip())
@@ -58,7 +58,7 @@ def test_save_history_writes_json_line(tmp_path):
 
 def test_save_history_appends(tmp_path):
     history_file = tmp_path / "history"
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.save_history("error 1", "explanation 1", "claude-sonnet-4-6", False)
         ex.save_history("error 2", "explanation 2", "claude-sonnet-4-6", True)
 
@@ -69,7 +69,7 @@ def test_save_history_appends(tmp_path):
 
 def test_save_history_truncates_long_errors(tmp_path):
     history_file = tmp_path / "history"
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.save_history("x" * 500, "explanation", "claude-sonnet-4-6", False)
 
     entry = json.loads(history_file.read_text().strip())
@@ -78,7 +78,7 @@ def test_save_history_truncates_long_errors(tmp_path):
 
 def test_save_history_with_name(tmp_path):
     history_file = tmp_path / "history"
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.save_history("err", "expl", "claude-sonnet-4-6", False, name="myerror")
 
     entry = json.loads(history_file.read_text().strip())
@@ -108,7 +108,7 @@ def test_explain_error_streams_output(tmp_path, capsys):
 
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
-            with patch.object(ex, "HISTORY_FILE", history_file):
+            with patch.object(ex.history, "HISTORY_FILE", history_file):
                 ex.explain_error("some error", model="claude-sonnet-4-6")
 
     assert "This is an error." in capsys.readouterr().out
@@ -125,7 +125,7 @@ def test_explain_error_brief_uses_short_prompt(tmp_path):
 
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
-            with patch.object(ex, "HISTORY_FILE", history_file):
+            with patch.object(ex.history, "HISTORY_FILE", history_file):
                 ex.explain_error("some error", model="claude-sonnet-4-6", brief=True)
 
     call_kwargs = mock_client.messages.stream.call_args.kwargs
@@ -372,7 +372,7 @@ def test_rate_last(tmp_path, capsys):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "expl", "brief": False}
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.rate_last(4)
 
     entry = json.loads(history_file.read_text().strip().splitlines()[-1])
@@ -384,7 +384,7 @@ def test_rate_last_invalid_exits(tmp_path):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "expl", "brief": False}
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         with pytest.raises(SystemExit):
             ex.rate_last(6)
 
@@ -394,7 +394,7 @@ def test_add_note(tmp_path):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "expl", "brief": False}
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.add_note("my note here")
 
     entry = json.loads(history_file.read_text().strip().splitlines()[-1])
@@ -406,7 +406,7 @@ def test_pin_entry_pins(tmp_path):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "expl", "brief": False}
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.pin_entry(True)
 
     entry = json.loads(history_file.read_text().strip().splitlines()[-1])
@@ -418,7 +418,7 @@ def test_pin_entry_unpins(tmp_path):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "expl", "brief": False, "pinned": True}
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.pin_entry(False)
 
     entry = json.loads(history_file.read_text().strip().splitlines()[-1])
@@ -436,7 +436,7 @@ def test_clear_history_keeps_pinned(tmp_path, monkeypatch):
         {"timestamp": "2026-01-01T00:00:01", "model": "m", "error": "keepme", "explanation": "e", "brief": False, "pinned": True},
     ])
     monkeypatch.setattr("builtins.input", lambda _: "y")
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.clear_history(None)
 
     remaining = [json.loads(l) for l in history_file.read_text().strip().splitlines()]
@@ -454,7 +454,7 @@ def test_show_history_filter_type(tmp_path, capsys):
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "TypeError: bad type", "explanation": "type error expl", "brief": False},
         {"timestamp": "2026-01-01T00:00:01", "model": "m", "error": "KeyError: missing key", "explanation": "key error expl", "brief": False},
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.show_history(None, filter_type="TypeError")
 
     out = capsys.readouterr().out
@@ -468,7 +468,7 @@ def test_show_recent_filter_type(tmp_path, capsys):
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "TypeError: bad", "explanation": "expl", "brief": False},
         {"timestamp": "2026-01-01T00:00:01", "model": "m", "error": "ValueError: bad", "explanation": "expl", "brief": False},
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.show_recent(10, filter_type="ValueError")
 
     out = capsys.readouterr().out
@@ -486,7 +486,7 @@ def test_list_named_shows_only_named(tmp_path, capsys):
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "unnamed err", "explanation": "e", "brief": False},
         {"timestamp": "2026-01-01T00:00:01", "model": "m", "error": "named err", "explanation": "e", "brief": False, "name": "myerror"},
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.list_named()
 
     out = capsys.readouterr().out
@@ -499,7 +499,7 @@ def test_list_named_no_named_entries(tmp_path, capsys):
     _write_history(history_file, [
         {"timestamp": "2026-01-01T00:00:00", "model": "m", "error": "err", "explanation": "e", "brief": False},
     ])
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.list_named()
 
     assert "No named entries" in capsys.readouterr().out
@@ -516,7 +516,7 @@ def test_export_csv_creates_file(tmp_path):
         {"timestamp": "2026-01-01T00:00:01", "model": "claude-opus-4-7", "error": "KeyError: x", "explanation": "missing key", "brief": False},
     ])
     out_csv = tmp_path / "out.csv"
-    with patch.object(ex, "HISTORY_FILE", history_file):
+    with patch.object(ex.history, "HISTORY_FILE", history_file):
         ex.export_csv(str(out_csv))
 
     assert out_csv.exists()
@@ -616,7 +616,7 @@ def test_load_profile_missing_exits(tmp_path):
     config = {"profiles": {"go": {"lang": "go"}}}
     config_file = tmp_path / ".errexrc"
     config_file.write_text(json.dumps(config))
-    with patch.object(ex, "CONFIG_FILE", config_file):
+    with patch.object(ex.config, "CONFIG_FILE", config_file):
         with pytest.raises(SystemExit):
             ex.load_profile("nonexistent", config)
 
@@ -632,7 +632,7 @@ def test_delete_profile_removes_entry(tmp_path, capsys):
     config = {"model": "claude-sonnet-4-6", "profiles": {"go": {"lang": "go"}, "py": {"lang": "python"}}}
     config_file = tmp_path / ".errexrc"
     config_file.write_text(json.dumps(config))
-    with patch.object(ex, "CONFIG_FILE", config_file):
+    with patch.object(ex.config, "CONFIG_FILE", config_file):
         ex.delete_profile("go")
 
     saved = json.loads(config_file.read_text())
@@ -644,6 +644,6 @@ def test_delete_profile_missing_exits(tmp_path):
     config = {"profiles": {"go": {"lang": "go"}}}
     config_file = tmp_path / ".errexrc"
     config_file.write_text(json.dumps(config))
-    with patch.object(ex, "CONFIG_FILE", config_file):
+    with patch.object(ex.config, "CONFIG_FILE", config_file):
         with pytest.raises(SystemExit):
             ex.delete_profile("nonexistent")

@@ -27,8 +27,9 @@ Repository = "https://github.com/Bsel153/errex"
 [project.optional-dependencies]
 dev = ["pytest"]
 
-[tool.setuptools]
-py-modules = ["errex", "web"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["errex*"]
 
 [project.scripts]
-errex = "errex:main"
+errex = "errex.cli:main"
