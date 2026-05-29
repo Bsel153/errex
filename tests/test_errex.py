@@ -647,3 +647,48 @@ def test_delete_profile_missing_exits(tmp_path):
     with patch.object(ex.config, "CONFIG_FILE", config_file):
         with pytest.raises(SystemExit):
             ex.delete_profile("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Pattern cache
+# ---------------------------------------------------------------------------
+
+def test_match_python_module_not_found():
+    title, expl = ex.match_pattern("ModuleNotFoundError: No module named 'requests'")
+    assert "ModuleNotFoundError" in title
+    assert "requests" in expl
+
+def test_match_none_type_attribute_error():
+    result = ex.match_pattern("AttributeError: 'NoneType' object has no attribute 'split'")
+    assert result is not None
+    title, expl = result
+    assert "NoneType" in title
+    assert "None" in expl
+
+def test_no_match_unknown_error():
+    assert ex.match_pattern("xyzzy: completely unknown error abc123") is None
+
+def test_list_patterns_returns_strings():
+    titles = ex.list_patterns()
+    assert isinstance(titles, list)
+    assert len(titles) > 20
+    assert all(isinstance(t, str) and t for t in titles)
+
+def test_match_node_cannot_find_module():
+    result = ex.match_pattern("Error: Cannot find module 'express'")
+    assert result is not None
+    assert "express" in result[1]
+
+def test_match_git_not_a_repo():
+    result = ex.match_pattern("fatal: not a git repository (or any of the parent directories): .git")
+    assert result is not None
+    assert "Git" in result[0]
+
+def test_match_returns_markdown():
+    _, expl = ex.match_pattern("ZeroDivisionError: division by zero")
+    assert "**" in expl  # markdown bold markers present
+
+def test_match_key_error():
+    result = ex.match_pattern("KeyError: 'username'")
+    assert result is not None
+    assert "KeyError" in result[0]

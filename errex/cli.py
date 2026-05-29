@@ -25,6 +25,7 @@ from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detec
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
                     check_for_update, get_env_info)
 from .watch import watch_file
+from .patterns import list_patterns as _list_patterns
 
 
 def main() -> None:
@@ -191,6 +192,10 @@ def main() -> None:
                         help="scan history and show groups of near-duplicate errors")
     parser.add_argument("--last", action="store_true",
                         help="print the last explanation from history without re-running Claude")
+    parser.add_argument("--no-cache", action="store_true", dest="no_cache",
+                        help="skip the local pattern cache and always call Claude")
+    parser.add_argument("--list-patterns", action="store_true", dest="list_patterns",
+                        help="show all built-in offline error patterns")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -373,6 +378,16 @@ def main() -> None:
 
     if args.dedup:
         dedup_history()
+        return
+
+    if args.list_patterns:
+        from rich.table import Table
+        tbl = Table(title="errex — built-in offline patterns", show_lines=False, box=None)
+        tbl.add_column("#", style="dim", width=4)
+        tbl.add_column("Pattern", style="cyan")
+        for i, title in enumerate(_list_patterns(), 1):
+            tbl.add_row(str(i), title)
+        output.console.print(tbl)
         return
 
     if args.last:
@@ -587,6 +602,7 @@ def main() -> None:
         dry_run=args.debug,
         top_n=args.top,
         perf=args.perf,
+        no_cache=args.no_cache,
     )
 
     if args.ci:

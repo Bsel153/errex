@@ -195,3 +195,21 @@ def test_no_api_key_prints_helpful_message():
     r = run([], input="SomeError: something went wrong\n", env={"ANTHROPIC_API_KEY": ""})
     output = r.stdout + r.stderr
     assert "ANTHROPIC_API_KEY" in output
+
+
+# ---------------------------------------------------------------------------
+# Pattern cache and --no-cache flag
+# ---------------------------------------------------------------------------
+
+def test_list_patterns_exits_zero():
+    r = run(["--list-patterns"])
+    assert r.returncode == 0
+
+def test_list_patterns_shows_python():
+    r = run(["--list-patterns"])
+    assert "Python" in r.stdout
+
+def test_no_cache_flag_accepted():
+    r = run(["--no-cache", "--list-patterns"])
+    assert "unrecognized" not in r.stderr.lower()
+    assert r.returncode == 0

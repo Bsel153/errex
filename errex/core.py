@@ -12,6 +12,7 @@ import anthropic
 from . import output, _constants
 from ._paths import HISTORY_FILE
 from .history import save_history
+from .patterns import match_pattern
 from .utils import (read_file, get_error_input, share_explanation,
                     post_webhook, search_github_issues, notify, extract_snippet,
                     format_json_error, redact_secrets, get_env_info)
@@ -115,8 +116,29 @@ def explain_error(
     dry_run: bool = False,
     top_n: int | None = None,
     perf: bool = False,
+    no_cache: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
+    # Try the local pattern cache before hitting the API
+    if not no_cache and not json_output and not fix and not dry_run and not terse:
+        hit = match_pattern(error_text)
+        if hit:
+            from rich.markdown import Markdown
+            title, explanation = hit
+            output.console.rule(f"[bold cyan]errex — {title}[/bold cyan]")
+            print()
+            output.console.print(Markdown(explanation))
+            print()
+            output.console.print("[dim]⚡ matched local pattern — use --no-cache to force Claude[/dim]")
+            output.console.rule(style="dim")
+            print()
+            save_history(error_text, explanation, "local", brief, name=save_as)
+            if output_file:
+                Path(output_file).write_text(explanation, encoding="utf-8")
+            if copy:
+                output.copy_to_clipboard(explanation)
+            return
+
     if not json_output and not dry_run:
         output.console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
