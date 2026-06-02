@@ -73,6 +73,8 @@ def main() -> None:
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
+    parser.add_argument("--tunnel", action="store_true",
+                        help="expose the web UI publicly via a free Cloudflare quick tunnel (no account needed)")
     parser.add_argument("--auth", default=None, metavar="USER:PASS",
                         help="enable HTTP Basic auth on the web UI (format: user:password)")
     parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
@@ -484,7 +486,7 @@ def main() -> None:
 
     if args.web:
         from .web_ui import serve
-        serve(host=args.host, auth=args.auth)
+        serve(host=args.host, auth=args.auth, tunnel=args.tunnel)
         return
 
     if args.update:

@@ -5,6 +5,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
+import socket
+import subprocess
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,7 +26,10 @@ HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>errex</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
@@ -171,11 +178,32 @@ HTML = r"""<!DOCTYPE html>
     .bar-fill { height:100%; background:var(--accent); border-radius:3px; transition:width .4s ease; }
     .bar-count { font-size:0.78rem; color:var(--muted); width:26px; text-align:right; flex-shrink:0; }
 
-    /* ── Mobile ── */
-    @media (max-width: 680px) {
-      .app { grid-template-columns: 1fr; }
-      .main { border-right: none; border-bottom: 1px solid var(--border); }
-      .sidebar { max-height: 200px; }
+    /* ── Mobile / touch ── */
+    @media (max-width: 768px) {
+      body { height: auto; overflow: auto; }
+      .app { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; min-height: 100vh; }
+      .hdr { position: sticky; top: 0; z-index: 10; background: var(--bg); }
+      .hdr .sub { display: none; }
+      .main { border-right: none; border-bottom: 1px solid var(--border); overflow: visible; }
+      .sidebar { max-height: none; padding: 1rem; }
+      textarea {
+        height: 160px;
+        font-size: 16px; /* prevents iOS zoom-on-focus */
+      }
+      .controls { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+      .controls > * { width: 100%; }
+      select { font-size: 16px; min-height: 44px; padding: 0.55rem 0.75rem; }
+      .tabs { width: 100%; }
+      .tabs button { flex: 1; min-height: 44px; font-size: 0.95rem; padding: 0.55rem 0; }
+      .chk { font-size: 0.9rem; padding: 0.3rem 0; }
+      .chk input { width: 18px; height: 18px; flex-shrink: 0; }
+      #btn { min-height: 52px; font-size: 1.05rem; padding: 0.7rem 1.5rem; margin-left: 0; }
+      .btn-copy { min-height: 40px; font-size: 0.8rem; padding: 0.4rem 0.8rem; }
+      .he { padding: 0.7rem 0.85rem; }
+      .he-err { font-size: 0.82rem; }
+      #out { font-size: 0.95rem; }
+      #out h2, #out h3 { font-size: 1rem; }
+      #out code { font-size: 0.85em; }
     }
   </style>
 </head>
@@ -587,11 +615,97 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None) -> None:
-    """auth format: 'user:password'"""
+def _local_ip() -> str:
+    """Return the machine's LAN IP address."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+
+
+def _start_tunnel(port: int) -> str | None:
+    """Start a cloudflared quick tunnel. Returns public URL or None."""
+    try:
+        proc = subprocess.Popen(
+            ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{port}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        return None
+
+    url_pat = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+    deadline = time.time() + 30
+    for line in proc.stdout:  # type: ignore[union-attr]
+        m = url_pat.search(line)
+        if m:
+            return m.group(0)
+        if time.time() > deadline:
+            proc.kill()
+            return None
+    return None
+
+
+def _print_qr(url: str) -> None:
+    """Print a terminal QR code for url using qrencode if available."""
+    try:
+        result = subprocess.run(
+            ["qrencode", "-t", "UTF8", "-o", "-", url],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            print(result.stdout)
+            return
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    print("  (install qrencode for a scannable QR: brew install qrencode)")
+
+
+def _print_banner(local_ip: str, port: int, tunnel_url: str | None) -> None:
+    local_url = f"http://{local_ip}:{port}"
+    col = 58
+    def row(label: str, value: str) -> str:
+        content = f"  {label:<18}{value}"
+        return f"│{content:<{col}}│"
+
+    print("┌" + "─" * col + "┐")
+    print(f"│  {'errex Web UI':<{col - 2}}│")
+    print("│" + " " * col + "│")
+    print(row("Local network:", local_url))
+    if tunnel_url:
+        print(row("Public URL:", tunnel_url))
+    print("│" + " " * col + "│")
+    print(f"│  {'Ctrl+C to stop':<{col - 2}}│")
+    print("└" + "─" * col + "┘")
+    if tunnel_url:
+        print()
+        print(f"  Scan to open on your phone:")
+        _print_qr(tunnel_url)
+    print()
+
+
+def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
+          tunnel: bool = False) -> None:
+    """Start the web UI. tunnel=True starts a free Cloudflare quick tunnel."""
     token = base64.b64encode(auth.encode()).decode() if auth else None
-    server = HTTPServer((host, port), _make_handler(token))
-    print(f"errex web UI → http://{host}:{port}  (Ctrl+C to stop)")
+    effective_host = "0.0.0.0" if tunnel else host
+    server = HTTPServer((effective_host, port), _make_handler(token))
+
+    local_ip = _local_ip()
+    tunnel_url = None
+    if tunnel:
+        print("  Starting Cloudflare tunnel…", end=" ", flush=True)
+        tunnel_url = _start_tunnel(port)
+        if tunnel_url:
+            print("connected!")
+        else:
+            print("failed.\n  Install cloudflared:  brew install cloudflared  or  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+
+    _print_banner(local_ip, port, tunnel_url)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:

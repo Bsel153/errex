@@ -1047,6 +1047,47 @@ class TestWebAuth:
 
 
 # ---------------------------------------------------------------------------
+# TestRemoteAccess (tunnel / local IP helpers)
+# ---------------------------------------------------------------------------
+
+class TestRemoteAccess:
+    def test_local_ip_returns_string(self):
+        from errex.web_ui import _local_ip
+        ip = _local_ip()
+        assert isinstance(ip, str)
+        assert "." in ip  # looks like an IP address
+
+    def test_start_tunnel_returns_none_when_not_installed(self, monkeypatch):
+        from errex.web_ui import _start_tunnel
+        monkeypatch.setattr(
+            "subprocess.Popen",
+            MagicMock(side_effect=FileNotFoundError("cloudflared not found")),
+        )
+        result = _start_tunnel(7337)
+        assert result is None
+
+    def test_start_tunnel_parses_url(self, monkeypatch):
+        from errex.web_ui import _start_tunnel
+        lines = [
+            "Starting tunnel...\n",
+            "2026-06-02T00:00:00Z INF | https://test-abc.trycloudflare.com |\n",
+        ]
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(lines)
+        monkeypatch.setattr("subprocess.Popen", MagicMock(return_value=mock_proc))
+        url = _start_tunnel(7337)
+        assert url == "https://test-abc.trycloudflare.com"
+
+    def test_tunnel_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--tunnel", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
 # TestDigest
 # ---------------------------------------------------------------------------
 
