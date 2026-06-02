@@ -195,3 +195,8 @@ def test_no_api_key_prints_helpful_message():
     r = run([], input="SomeError: something went wrong\n", env={"ANTHROPIC_API_KEY": ""})
     output = r.stdout + r.stderr
     assert "ANTHROPIC_API_KEY" in output
+
+
+def test_web_auth_flag_accepted():
+    r = run(["--auth", "user:pass", "--help"])
+    assert "unrecognized" not in r.stderr.lower()

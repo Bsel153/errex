@@ -6,6 +6,7 @@ Then open http://localhost:7337 in your browser.
 
 from __future__ import annotations
 
+import base64
 import os
 import json
 import threading
@@ -13,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import anthropic
+
+from ._paths import HISTORY_FILE as _HISTORY_FILE
 
 SYSTEM_PROMPT = """You are a senior software engineer with 15+ years of experience across Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, shell scripting, SQL, and cloud infrastructure. You specialize in debugging and explaining errors clearly to developers at all levels.
 
@@ -127,6 +130,88 @@ HTML = """<!DOCTYPE html>
     #output strong { color: #f1f5f9; }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff3; border-top-color: white; border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 0.5rem; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Tab bar */
+    .tab-bar {
+      display: flex;
+      gap: 0.25rem;
+      margin-bottom: 1rem;
+      border-bottom: 1px solid #2d3748;
+      padding-bottom: 0;
+    }
+    .tab {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-left: 0;
+      padding: 0.5rem 1rem;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .tab:hover { background: none; color: #e2e8f0; }
+    .tab.active { border-bottom-color: #7dd3fc; color: #7dd3fc; }
+    /* Stats styles */
+    .stat-total {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: #7dd3fc;
+      margin-bottom: 1.25rem;
+      line-height: 1.1;
+    }
+    .stat-total span {
+      font-size: 1rem;
+      font-weight: 400;
+      color: #64748b;
+      margin-left: 0.4rem;
+    }
+    .stat-section {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #64748b;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin: 1.25rem 0 0.6rem;
+    }
+    .bar-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.4rem;
+    }
+    .bar-label {
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      width: 140px;
+      flex-shrink: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bar-track {
+      flex: 1;
+      background: #1e2130;
+      border: 1px solid #2d3748;
+      border-radius: 3px;
+      height: 10px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      background: #7dd3fc;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .bar-count {
+      font-size: 0.8rem;
+      color: #64748b;
+      width: 28px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    .muted { color: #64748b; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -150,6 +235,15 @@ HTML = """<!DOCTYPE html>
     </div>
 
     <div id="output"></div>
+
+    <div style="margin-top:2rem;">
+      <div class="tab-bar">
+        <button class="tab active" onclick="switchTab('history')">History</button>
+        <button class="tab" onclick="switchTab('stats')">Stats</button>
+      </div>
+      <div id="history-content"><!-- existing history list --></div>
+      <div id="stats-content" style="display:none"></div>
+    </div>
   </div>
 
   <script>
@@ -189,22 +283,128 @@ HTML = """<!DOCTYPE html>
     document.getElementById('error').addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') explain();
     });
+
+    // Stats tab
+    async function loadStats() {
+      const r = await fetch('/stats');
+      const d = await r.json();
+      const el = document.getElementById('stats-content');
+      if (!d.total) { el.innerHTML = '<p class="muted">No history yet.</p>'; return; }
+
+      let html = `<div class="stat-total">${d.total} <span>explanations</span></div>`;
+
+      if (Object.keys(d.error_types).length) {
+        html += '<div class="stat-section">Top error types</div>';
+        const max = Math.max(...Object.values(d.error_types));
+        for (const [k, v] of Object.entries(d.error_types).slice(0, 8)) {
+          const pct = Math.round(v / max * 100);
+          html += `<div class="bar-row"><span class="bar-label">${k}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+            <span class="bar-count">${v}</span></div>`;
+        }
+      }
+
+      if (Object.keys(d.models).length) {
+        html += '<div class="stat-section">Models</div>';
+        const maxM = Math.max(...Object.values(d.models));
+        for (const [k, v] of Object.entries(d.models)) {
+          const pct = Math.round(v / maxM * 100);
+          html += `<div class="bar-row"><span class="bar-label">${k}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+            <span class="bar-count">${v}</span></div>`;
+        }
+      }
+
+      if (Object.keys(d.daily).length) {
+        html += '<div class="stat-section">Activity (last 14 days)</div>';
+        for (const [day, cnt] of Object.entries(d.daily)) {
+          html += `<div class="bar-row"><span class="bar-label">${day}</span><span class="bar-count">${cnt}</span></div>`;
+        }
+      }
+
+      el.innerHTML = html;
+    }
+
+    function switchTab(name) {
+      document.getElementById('history-content').style.display = name === 'history' ? '' : 'none';
+      document.getElementById('stats-content').style.display = name === 'stats' ? '' : 'none';
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === name));
+      if (name === 'stats') loadStats();
+    }
   </script>
 </body>
 </html>"""
 
 
+def _compute_stats() -> dict:
+    from collections import Counter
+    entries = []
+    if _HISTORY_FILE.exists():
+        with open(_HISTORY_FILE) as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+    if not entries:
+        return {"total": 0, "error_types": {}, "models": {}, "daily": {}}
+    from .utils import extract_error_type
+    error_types = Counter(extract_error_type(e.get("error", "")) for e in entries)
+    models = Counter(e.get("model", "unknown") for e in entries)
+    daily = Counter(e["timestamp"][:10] for e in entries if "timestamp" in e)
+    return {
+        "total": len(entries),
+        "error_types": dict(error_types.most_common(10)),
+        "models": dict(models),
+        "daily": dict(sorted(daily.items())[-14:]),  # last 14 days
+    }
+
+
+def _make_handler(auth_token: str | None):
+    class _H(Handler):
+        _auth = auth_token  # base64-encoded "user:pass", or None
+    return _H
+
+
 class Handler(BaseHTTPRequestHandler):
+    _auth: str | None = None
+
     def log_message(self, fmt, *args):
         pass  # suppress default access log
 
+    def _check_auth(self) -> bool:
+        """Return True if auth passes (or auth is disabled). Send 401 and return False otherwise."""
+        if not self._auth:
+            return True
+        given = self.headers.get("Authorization", "")
+        expected = "Basic " + self._auth
+        if given != expected:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="errex"')
+            self.end_headers()
+            return False
+        return True
+
     def do_GET(self):
+        if not self._check_auth():
+            return
+
+        path = urlparse(self.path).path
+
+        if path == "/stats":
+            self._json(_compute_stats())
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(HTML.encode())
 
     def do_POST(self):
+        if not self._check_auth():
+            return
+
         if urlparse(self.path).path != "/explain":
             self.send_response(404)
             self.end_headers()
@@ -251,8 +451,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def serve(host: str = "127.0.0.1", port: int = 7337) -> None:
-    server = HTTPServer((host, port), Handler)
+def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None) -> None:
+    """auth format: 'user:password'"""
+    token = base64.b64encode(auth.encode()).decode() if auth else None
+    server = HTTPServer((host, port), _make_handler(token))
     print(f"errex web UI → http://{host}:{port}  (Ctrl+C to stop)")
     try:
         server.serve_forever()

@@ -647,3 +647,24 @@ def test_delete_profile_missing_exits(tmp_path):
     with patch.object(ex.config, "CONFIG_FILE", config_file):
         with pytest.raises(SystemExit):
             ex.delete_profile("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# TestWebAuth
+# ---------------------------------------------------------------------------
+
+class TestWebAuth:
+    def test_compute_stats_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", tmp_path / "h.jsonl")
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 0
+
+    def test_compute_stats_counts(self, tmp_path, monkeypatch):
+        import json
+        h = tmp_path / "h.jsonl"
+        h.write_text(json.dumps({"error": "ModuleNotFoundError: foo", "timestamp": "2026-06-01T12:00:00"}) + "\n")
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", h)
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 1

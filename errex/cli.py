@@ -69,6 +69,10 @@ def main() -> None:
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
+    parser.add_argument("--host", default="127.0.0.1", metavar="HOST",
+                        help="host to bind the web UI to (default: 127.0.0.1)")
+    parser.add_argument("--auth", default=None, metavar="USER:PASS",
+                        help="enable HTTP Basic auth on the web UI (format: user:password)")
     parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
     parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
@@ -420,7 +424,7 @@ def main() -> None:
 
     if args.web:
         from .web_ui import serve
-        serve()
+        serve(host=args.host, auth=args.auth)
         return
 
     if args.update:
