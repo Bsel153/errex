@@ -1178,3 +1178,94 @@ class TestDigest:
         monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("network error")))
         result = ex.send_digest("http://example.com", {})
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Security / privacy / permissions
+# ---------------------------------------------------------------------------
+
+class TestSecurity:
+    def test_privacy_text_mentions_anthropic(self):
+        from errex.security import get_privacy_text
+        text = get_privacy_text()
+        assert "Anthropic" in text
+        assert "history" in text.lower()
+
+    def test_privacy_text_mentions_opt_out(self):
+        from errex.security import get_privacy_text
+        assert "--no-history" in get_privacy_text()
+
+    def test_permissions_summary_structure(self):
+        from errex.security import get_permissions_summary
+        p = get_permissions_summary()
+        assert "files" in p
+        assert "environment" in p
+        assert "network" in p
+        assert "history" in p["files"]
+        assert "cache" in p["files"]
+
+    def test_permissions_summary_env_keys(self):
+        from errex.security import get_permissions_summary
+        p = get_permissions_summary()
+        assert "ANTHROPIC_API_KEY" in p["environment"]
+
+    def test_privacy_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--privacy"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "Anthropic" in r.stdout
+
+    def test_show_access_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--show-access"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "history" in r.stdout.lower()
+
+    def test_no_history_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--no-history", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+    def test_tls_flags_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--tls", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+    def test_no_history_prevents_save(self, tmp_path, monkeypatch):
+        """--no-history should not write to the history file."""
+        history_file = tmp_path / "history"
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.text_stream = iter(["Fixed!"])
+        mock_final = MagicMock()
+        mock_final.usage.input_tokens = 5
+        mock_final.usage.output_tokens = 5
+        mock_stream.get_final_message.return_value = mock_final
+        mock_client = MagicMock()
+        mock_client.messages.stream.return_value = mock_stream
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                with patch.object(ex.history, "HISTORY_FILE", history_file):
+                    ex.explain_error(
+                        "some unique error xyz",
+                        model="claude-sonnet-4-6",
+                        no_history=True,
+                        no_cache=True,
+                        use_cache=False,
+                    )
+
+        assert not history_file.exists()

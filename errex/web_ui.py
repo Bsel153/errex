@@ -212,6 +212,7 @@ HTML = r"""<!DOCTYPE html>
   <header class="hdr">
     <h1>errex</h1>
     <span class="sub">paste any error · get a plain-English explanation</span>
+    <a href="/privacy" target="_blank" style="margin-left:auto;font-size:0.72rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:0.18rem 0.5rem;" title="Privacy policy — what errex sees and stores">🔒 Privacy</a>
   </header>
 
   <main class="main">
@@ -522,6 +523,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"entries": list(reversed(entries[-25:]))})
             return
 
+        if path == "/privacy":
+            from .security import get_privacy_text
+            text = get_privacy_text()
+            body = (
+                "<!DOCTYPE html><html><head>"
+                "<meta charset='UTF-8'>"
+                "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                "<title>errex — Privacy</title>"
+                "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+                "background:#0f1117;color:#e2e8f0;max-width:760px;margin:2rem auto;padding:0 1.25rem;}"
+                "pre{background:#1a1d27;border:1px solid #2d3748;border-radius:8px;padding:1.25rem;"
+                "white-space:pre-wrap;word-break:break-word;font-size:0.88rem;line-height:1.7;}"
+                "a{color:#7dd3fc;}h1{color:#7dd3fc;margin-bottom:0.5rem;}</style></head>"
+                f"<body><h1>🔒 errex Privacy</h1><pre>{text}</pre></body></html>"
+            )
+            self._html(body)
+            return
+
+        if path == "/permissions":
+            from .security import get_permissions_summary
+            self._json(get_permissions_summary())
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -606,6 +630,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(line)
         self.wfile.flush()
 
+    def _html(self, body: str, status: int = 200) -> None:
+        payload = body.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def _json(self, data: dict, status: int = 200) -> None:
         payload = json.dumps(data).encode()
         self.send_response(status)
@@ -664,8 +696,9 @@ def _print_qr(url: str) -> None:
     print("  (install qrencode for a scannable QR: brew install qrencode)")
 
 
-def _print_banner(local_ip: str, port: int, tunnel_url: str | None) -> None:
-    local_url = f"http://{local_ip}:{port}"
+def _print_banner(local_ip: str, port: int, tunnel_url: str | None,
+                  scheme: str = "http") -> None:
+    local_url = f"{scheme}://{local_ip}:{port}"
     col = 58
     def row(label: str, value: str) -> str:
         content = f"  {label:<18}{value}"
@@ -688,11 +721,29 @@ def _print_banner(local_ip: str, port: int, tunnel_url: str | None) -> None:
 
 
 def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
-          tunnel: bool = False) -> None:
-    """Start the web UI. tunnel=True starts a free Cloudflare quick tunnel."""
+          tunnel: bool = False, tls: bool = False,
+          cert: str | None = None, key: str | None = None) -> None:
+    """Start the web UI.
+
+    tunnel=True  — start a free Cloudflare quick tunnel for public access
+    tls=True     — wrap in HTTPS using an auto-generated self-signed cert
+    cert/key     — paths to an existing cert/key (implies tls=True)
+    """
+    import ssl as _ssl
     token = base64.b64encode(auth.encode()).decode() if auth else None
     effective_host = "0.0.0.0" if tunnel else host
     server = HTTPServer((effective_host, port), _make_handler(token))
+
+    scheme = "http"
+    if tls or cert:
+        from .security import generate_self_signed_cert
+        from pathlib import Path as _Path
+        if not cert:
+            cert, key = generate_self_signed_cert()
+        ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(cert, key)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
 
     local_ip = _local_ip()
     tunnel_url = None
@@ -704,7 +755,10 @@ def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
         else:
             print("failed.\n  Install cloudflared:  brew install cloudflared  or  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
 
-    _print_banner(local_ip, port, tunnel_url)
+    _print_banner(local_ip, port, tunnel_url, scheme=scheme)
+    if scheme == "https":
+        print("  Note: browser will warn about self-signed cert — this is expected.")
+        print(f"  Cert: {cert}\n")
 
     try:
         server.serve_forever()

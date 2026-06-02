@@ -209,6 +209,18 @@ def main() -> None:
                         help="print the last explanation from history without re-running Claude")
     parser.add_argument("--no-cache", action="store_true", dest="no_cache",
                         help="skip the local pattern cache and response cache; always call Claude")
+    parser.add_argument("--no-history", action="store_true", dest="no_history",
+                        help="don't save this explanation to ~/.errex_history")
+    parser.add_argument("--tls", action="store_true",
+                        help="serve the web UI over HTTPS with a self-signed certificate")
+    parser.add_argument("--cert", default=None, metavar="FILE",
+                        help="path to TLS certificate file (PEM format) for --web")
+    parser.add_argument("--key", default=None, metavar="FILE",
+                        help="path to TLS private key file (PEM format) for --web")
+    parser.add_argument("--privacy", action="store_true",
+                        help="print what data errex reads and stores, then exit")
+    parser.add_argument("--show-access", action="store_true", dest="show_access",
+                        help="show all files and env vars errex has access to")
     parser.add_argument("--list-patterns", action="store_true", dest="list_patterns",
                         help="show all built-in offline error patterns")
     parser.add_argument("--clear-cache", action="store_true", dest="clear_cache_flag",
@@ -243,6 +255,29 @@ def main() -> None:
 
     if args.ci:
         args.terse = True
+
+    if args.privacy:
+        from .security import get_privacy_text
+        output.console.print(get_privacy_text())
+        return
+
+    if args.show_access:
+        from .security import get_permissions_summary
+        import json
+        perm = get_permissions_summary()
+        output.console.rule("[bold cyan]errex — Data Access[/bold cyan]")
+        output.console.print("\n[bold]Files:[/bold]")
+        for name, info in perm["files"].items():
+            status = f"{info['size_kb']} KB" if info["exists"] else "not found"
+            output.console.print(f"  {name:<14} {info['path']}  ({status})")
+        output.console.print("\n[bold]Environment variables:[/bold]")
+        for k, v in perm["environment"].items():
+            output.console.print(f"  {k:<22} {v}")
+        output.console.print("\n[bold]Network (only when features are used):[/bold]")
+        for item in perm["network"]:
+            output.console.print(f"  • {item}")
+        output.console.print()
+        return
 
     if args.rate is not None:
         rate_last(args.rate)
@@ -486,7 +521,8 @@ def main() -> None:
 
     if args.web:
         from .web_ui import serve
-        serve(host=args.host, auth=args.auth, tunnel=args.tunnel)
+        serve(host=args.host, auth=args.auth, tunnel=args.tunnel,
+              tls=args.tls, cert=args.cert, key=args.key)
         return
 
     if args.update:
@@ -672,6 +708,7 @@ def main() -> None:
         perf=args.perf,
         no_cache=args.no_cache,
         use_cache=not args.no_cache,
+        no_history=args.no_history,
     )
 
     if args.open_ticket:

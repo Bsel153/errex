@@ -119,6 +119,7 @@ def explain_error(
     perf: bool = False,
     no_cache: bool = False,
     use_cache: bool = True,
+    no_history: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
     # Try the local pattern cache before hitting the API
@@ -134,7 +135,8 @@ def explain_error(
             output.console.print("[dim]⚡ matched local pattern — use --no-cache to force Claude[/dim]")
             output.console.rule(style="dim")
             print()
-            save_history(error_text, explanation, "local", brief, name=save_as)
+            if not no_history:
+                save_history(error_text, explanation, "local", brief, name=save_as)
             if output_file:
                 Path(output_file).write_text(explanation, encoding="utf-8")
             if copy:
@@ -154,7 +156,8 @@ def explain_error(
             output.console.print("[dim]📦 cached response — use --no-cache to call Claude[/dim]")
             output.console.rule(style="dim")
             print()
-            save_history(error_text, cached, model, brief, name=save_as)
+            if not no_history:
+                save_history(error_text, cached, model, brief, name=save_as)
             if output_file:
                 Path(output_file).write_text(cached, encoding="utf-8")
             if copy:
@@ -188,7 +191,8 @@ def explain_error(
         output.console.rule(style="dim")
         print()
 
-    save_history(error_text, response, model, brief, name=save_as)
+    if not no_history:
+        save_history(error_text, response, model, brief, name=save_as)
 
     if output_file:
         out = Path(output_file)
