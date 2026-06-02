@@ -465,6 +465,377 @@ PATTERNS: list[Pattern] = [
             "use `git checkout -b <branch> <tag>` if you want to commit from a tag."
         ),
     ),
+    # ── Rust ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Rust — E0308 (mismatched types)",
+        regex=re.compile(r"error\[E0308\]: mismatched types", re.IGNORECASE),
+        explanation=(
+            "**Type mismatch: Rust expected one type but found another.**\n\n"
+            "**Fix**: Check the types on both sides of the assignment or function call. "
+            "Use an explicit cast or conversion:\n"
+            "```rust\nlet x: i64 = my_i32 as i64;     // cast\nlet x: String = my_str.into();  // From/Into trait\n```\n\n"
+            "**Gotcha**: Rust **never** implicitly converts numeric types — "
+            "even `i32` to `i64` requires an explicit `as` cast or `.into()`."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0382 (use of moved value)",
+        regex=re.compile(r"error\[E0382\]: (borrow of|use of) moved value", re.IGNORECASE),
+        explanation=(
+            "**Ownership was moved — you can't use the value again after it was moved.**\n\n"
+            "**Fix**: Clone before moving if you need to keep using the original:\n"
+            "```rust\nlet s2 = s1.clone();\nsome_fn(s1);   // s1 is moved here\nprintln!(\"{}\", s2);  // s2 is a clone, still valid\n```\n"
+            "Or restructure to avoid the move entirely.\n\n"
+            "**Gotcha**: This is Rust's ownership system at work — "
+            "understand the difference between a *move* and a *borrow* (`&T`)."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0106 (missing lifetime)",
+        regex=re.compile(r"error\[E0106\]: missing lifetime specifier", re.IGNORECASE),
+        explanation=(
+            "**A reference inside a struct or function signature needs a lifetime annotation.**\n\n"
+            "**Fix**: Add a `'a` lifetime parameter:\n"
+            "```rust\nstruct Foo<'a> {\n    data: &'a str,\n}\n```\n\n"
+            "**Gotcha**: Start with `'_` (anonymous lifetime) and let the compiler guide you — "
+            "it often suggests the exact fix needed."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0502 (borrow conflict)",
+        regex=re.compile(r"error\[E0502\]: cannot borrow .+ as mutable because it is also borrowed as immutable", re.IGNORECASE),
+        explanation=(
+            "**You can't have a mutable borrow and an immutable borrow of the same value at the same time.**\n\n"
+            "**Fix**: End the immutable borrow before mutating:\n"
+            "```rust\nlet r = &v[0];         // immutable borrow\nprintln!(\"{}\", r);    // last use of r — borrow ends here\nv.push(4);            // mutable borrow OK now\n```\n\n"
+            "**Gotcha**: The borrow checker tracks lexical scopes — "
+            "restructure code so immutable and mutable borrows don't overlap."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0277 (trait not implemented)",
+        regex=re.compile(r"error\[E0277\]: .+ is not implemented for", re.IGNORECASE),
+        explanation=(
+            "**A type doesn't implement a trait that's required.**\n\n"
+            "**Fix**: Derive the trait if possible:\n"
+            "```rust\n#[derive(Debug, Clone, PartialEq)]\nstruct MyStruct { ... }\n```\n"
+            "Or implement it manually:\n"
+            "```rust\nimpl std::fmt::Display for MyStruct { ... }\n```\n\n"
+            "**Gotcha**: Some traits (like `serde::Serialize`) require a feature flag — "
+            "make sure the right crate and feature are in your `Cargo.toml`."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0369 (operator not supported)",
+        regex=re.compile(r"error\[E0369\]: binary operation .+ cannot be applied to type", re.IGNORECASE),
+        explanation=(
+            "**This type doesn't implement the operator's underlying trait.**\n\n"
+            "**Fix**: Derive or implement the relevant trait:\n"
+            "```rust\n#[derive(PartialEq, PartialOrd)]  // for == < > etc.\nstruct MyNum(f64);\n\nuse std::ops::Add;\nimpl Add for MyNum { ... }         // for +\n```\n\n"
+            "**Gotcha**: Rust operators are just syntactic sugar for traits — "
+            "`a + b` calls `Add::add(a, b)`."
+        ),
+    ),
+    Pattern(
+        title="Rust — Thread Panicked",
+        regex=re.compile(r"thread '(?:main|.+)' panicked at", re.IGNORECASE),
+        explanation=(
+            "**The Rust program panicked** — an unrecoverable error occurred at runtime.\n\n"
+            "Common causes: index out of bounds, `unwrap()` on `None`/`Err`, explicit `panic!()`.\n\n"
+            "**Fix**: Replace panicking code with proper error handling:\n"
+            "```rust\n// Instead of: vec[idx]\nif let Some(v) = vec.get(idx) { ... }\n\n// Instead of: result.unwrap()\nresult?   // propagate error with the ? operator\n\n// Instead of: option.unwrap()\nif let Some(v) = option { ... }\n```\n\n"
+            "**Gotcha**: `unwrap()` and `expect()` panic on `None`/`Err` — "
+            "use `?` operator or `match`/`if let` for proper error handling."
+        ),
+    ),
+    # ── Java ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Java — NullPointerException",
+        regex=re.compile(r"java\.lang\.NullPointerException", re.IGNORECASE),
+        explanation=(
+            "**Accessing a method or field on a `null` reference.**\n\n"
+            "**Fix**: Add a null check before the access:\n"
+            "```java\nif (obj != null) {\n    obj.doSomething();\n}\n// or use Optional:\nOptional.ofNullable(obj).ifPresent(o -> o.doSomething());\n```\n\n"
+            "**Gotcha**: Java 14+ NPEs include helpful messages like "
+            "\"Cannot invoke X because Y is null\" — read them carefully to pinpoint the null."
+        ),
+    ),
+    Pattern(
+        title="Java — ClassCastException",
+        regex=re.compile(r"java\.lang\.ClassCastException", re.IGNORECASE),
+        explanation=(
+            "**Trying to cast an object to a type it isn't.**\n\n"
+            "**Fix**: Check the type with `instanceof` before casting:\n"
+            "```java\nif (obj instanceof String s) {  // Java 16+ pattern matching\n    System.out.println(s.length());\n}\n```\n\n"
+            "**Gotcha**: Generics use type erasure at runtime — "
+            "`List<String>` and `List<Integer>` are both just `List` at runtime, "
+            "so a bad cast can slip through compile time."
+        ),
+    ),
+    Pattern(
+        title="Java — StackOverflowError",
+        regex=re.compile(r"java\.lang\.StackOverflowError", re.IGNORECASE),
+        explanation=(
+            "**Infinite recursion — the call stack exceeded its limit.**\n\n"
+            "**Fix**: Add a base case to your recursive method:\n"
+            "```java\nint factorial(int n) {\n    if (n <= 1) return 1;  // base case\n    return n * factorial(n - 1);\n}\n```\n\n"
+            "**Gotcha**: The default Java stack is 512KB–1MB. You can increase it with `-Xss` "
+            "but that's rarely the right fix — fix the recursion instead."
+        ),
+    ),
+    Pattern(
+        title="Java — ClassNotFoundException",
+        regex=re.compile(r"java\.lang\.ClassNotFoundException: (.+)", re.IGNORECASE),
+        explanation=(
+            "**Class `{0}` was not found on the classpath.**\n\n"
+            "**Fix**: Check your dependencies:\n"
+            "```xml\n<!-- Maven pom.xml -->\n<dependency>\n    <groupId>...</groupId>\n    <artifactId>...</artifactId>\n</dependency>\n```\n"
+            "Or for Gradle: add the dependency to `build.gradle`.\n\n"
+            "**Gotcha**: Common when a JAR is missing, the fully-qualified class name has a typo, "
+            "or you're loading a class dynamically with `Class.forName()`."
+        ),
+    ),
+    Pattern(
+        title="Java — OutOfMemoryError (heap)",
+        regex=re.compile(r"java\.lang\.OutOfMemoryError: Java heap space", re.IGNORECASE),
+        explanation=(
+            "**The JVM heap is full.**\n\n"
+            "**Fix**: Increase the heap size:\n"
+            "```bash\njava -Xmx512m -jar app.jar   # set max heap to 512MB\n```\n"
+            "But first, find and fix any memory leaks.\n\n"
+            "**Gotcha**: Profile with VisualVM or JProfiler to find what's consuming memory — "
+            "simply increasing `-Xmx` without fixing leaks is only a temporary fix."
+        ),
+    ),
+    Pattern(
+        title="Java — Uncaught Exception",
+        regex=re.compile(r"Exception in thread \"(?:main|.+)\" java\.lang\.(\w+Exception)", re.IGNORECASE),
+        explanation=(
+            "**An unhandled `{0}` exception terminated the thread.**\n\n"
+            "**Fix**: Wrap the call in a try/catch and handle it appropriately:\n"
+            "```java\ntry {\n    riskyOperation();\n} catch ({0} e) {{\n    // log or handle the exception\n    e.printStackTrace();\n}}\n```\n\n"
+            "**Gotcha**: Catching `Exception` is too broad — "
+            "catch the most specific type you can handle to avoid hiding bugs."
+        ),
+    ),
+    # ── Go ───────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Go — Index Out of Range",
+        regex=re.compile(r"panic: runtime error: index out of range \[(\d+)\] with length (\d+)", re.IGNORECASE),
+        explanation=(
+            "**Accessing index {0} in a slice/array of length {1}.**\n\n"
+            "**Fix**: Check the length before accessing:\n"
+            "```go\nif len(slice) > {0} {{\n    val := slice[{0}]\n}}\n```\n\n"
+            "**Gotcha**: Go doesn't panic on a nil map *read* (returns the zero value), "
+            "but it *does* panic on a nil map *write* — always initialize maps with `make(map[K]V)`."
+        ),
+    ),
+    Pattern(
+        title="Go — Nil Pointer Dereference",
+        regex=re.compile(r"panic: runtime error: invalid memory address or nil pointer dereference", re.IGNORECASE),
+        explanation=(
+            "**Dereferencing a nil pointer.**\n\n"
+            "**Fix**: Check the pointer for nil before dereferencing:\n"
+            "```go\nif p != nil {\n    fmt.Println(p.Field)\n}\n```\n\n"
+            "**Gotcha**: Interface values can be non-nil but hold a nil concrete pointer — "
+            "use `reflect` to detect this edge case, or design APIs to avoid nil interface values."
+        ),
+    ),
+    Pattern(
+        title="Go — Type Assertion Failed",
+        regex=re.compile(r"panic: interface conversion: interface \{\} is (.+), not (.+)", re.IGNORECASE),
+        explanation=(
+            "**Type assertion `.(T)` failed** — the interface holds a `{0}`, not a `{1}`.\n\n"
+            "**Fix**: Always use the two-value form for type assertions:\n"
+            "```go\nv, ok := x.({1})\nif ok {{\n    // safe to use v as {1}\n}}\n```\n\n"
+            "**Gotcha**: The single-value form `v := x.({1})` panics if the assertion fails — "
+            "never use it on an interface that might hold a different type."
+        ),
+    ),
+    Pattern(
+        title="Go — Missing Module",
+        regex=re.compile(r"go: .*: no required module provides package (.+)", re.IGNORECASE),
+        explanation=(
+            "**Package `{0}` is not in `go.mod`.**\n\n"
+            "**Fix**:\n"
+            "```bash\ngo get {0}\ngo mod tidy\n```\n\n"
+            "**Gotcha**: If you're using a Go workspace (`go.work`), "
+            "also run `go work sync` to keep module dependencies in sync."
+        ),
+    ),
+    # ── Python (additional) ──────────────────────────────────────────────────
+    Pattern(
+        title="Python — RuntimeError (dict changed during iteration)",
+        regex=re.compile(r"RuntimeError: dictionary changed size during iteration", re.IGNORECASE),
+        explanation=(
+            "**A dictionary was modified while iterating over it.**\n\n"
+            "**Fix**: Iterate over a copy of the keys or items:\n"
+            "```python\nfor k in list(d.keys()):\n    if should_remove(k):\n        del d[k]\n# or\nfor k, v in list(d.items()):\n    ...\n```\n\n"
+            "**Gotcha**: The same issue occurs with lists — if you remove items from a list "
+            "while iterating, iterate `list(original)` instead."
+        ),
+    ),
+    Pattern(
+        title="Python — UnicodeDecodeError",
+        regex=re.compile(r"UnicodeDecodeError: '([^']+)' codec can't decode", re.IGNORECASE),
+        explanation=(
+            "**Bytes couldn't be decoded using the `{0}` codec.**\n\n"
+            "**Fix**: Specify the correct encoding when opening files:\n"
+            "```python\nwith open(path, encoding='utf-8') as f:\n    ...\n# or be lenient:\nwith open(path, encoding='utf-8', errors='replace') as f:\n    ...\n```\n\n"
+            "**Gotcha**: Files from Windows often use `cp1252` instead of `utf-8`. "
+            "Use the `chardet` library (`pip install chardet`) to auto-detect encoding."
+        ),
+    ),
+    Pattern(
+        title="Python — StopIteration",
+        regex=re.compile(r"\bStopIteration\b", re.IGNORECASE),
+        explanation=(
+            "**`next()` was called on an exhausted iterator.**\n\n"
+            "**Fix**: Use `next()` with a default value:\n"
+            "```python\nvalue = next(iterator, None)  # returns None instead of raising\n```\n"
+            "Or use a `for` loop, which handles `StopIteration` automatically.\n\n"
+            "**Gotcha**: In Python 3.7+, raising `StopIteration` inside a generator "
+            "causes it to silently return — use `return` instead."
+        ),
+    ),
+    Pattern(
+        title="Python — CalledProcessError",
+        regex=re.compile(r"subprocess\.CalledProcessError: Command '(.+)' returned non-zero exit status (\d+)", re.IGNORECASE),
+        explanation=(
+            "**Command `{0}` failed with exit code {1}.**\n\n"
+            "**Fix**: Inspect stderr to see what went wrong:\n"
+            "```python\nresult = subprocess.run(\n    cmd, capture_output=True, text=True, check=False\n)\nprint(result.stderr)\n```\n\n"
+            "**Gotcha**: Use `capture_output=True` (Python 3.7+) to capture both stdout and stderr — "
+            "without it you won't see the error output."
+        ),
+    ),
+    Pattern(
+        title="Python — SSL Certificate Error",
+        regex=re.compile(r"ssl\.SSLCertVerificationError|certificate verify failed", re.IGNORECASE),
+        explanation=(
+            "**TLS certificate verification failed.**\n\n"
+            "**Fix**:\n"
+            "```bash\npip install --upgrade certifi\n```\n"
+            "On macOS, also run:\n"
+            "```bash\n/Applications/Python*/Install\\ Certificates.command\n```\n\n"
+            "**Gotcha**: Never use `verify=False` in production — "
+            "it disables HTTPS security entirely and exposes you to man-in-the-middle attacks."
+        ),
+    ),
+    Pattern(
+        title="Python — OverflowError",
+        regex=re.compile(r"OverflowError: Python int too large to convert to C (long|int)", re.IGNORECASE),
+        explanation=(
+            "**A Python integer is too large for the C `{0}` type.**\n\n"
+            "**Fix**: Use NumPy's 64-bit integers or restructure to avoid the conversion:\n"
+            "```python\nimport numpy as np\nvalue = np.int64(large_number)\n```\n\n"
+            "**Gotcha**: Python integers are unbounded, but C types have fixed sizes — "
+            "this error is common when interfacing with C extensions or system calls."
+        ),
+    ),
+    # ── Docker / containers ──────────────────────────────────────────────────
+    Pattern(
+        title="Docker — COPY failed (file not found)",
+        regex=re.compile(r"COPY failed: file not found in build context or excluded by \.dockerignore: (.+)", re.IGNORECASE),
+        explanation=(
+            "**The file/directory `{0}` doesn't exist in the Docker build context.**\n\n"
+            "**Fix**:\n"
+            "1. Check the path is relative to the directory you pass to `docker build`\n"
+            "2. Check your `.dockerignore` — the file may be excluded\n"
+            "3. Verify the file actually exists: `ls -la <path>`\n\n"
+            "**Gotcha**: The build context is the directory you pass to `docker build .` — "
+            "not the directory where the Dockerfile lives."
+        ),
+    ),
+    Pattern(
+        title="Docker — Daemon Error",
+        regex=re.compile(r"Error response from daemon: .*(no space left|no such file or directory|manifest unknown|pull access denied)", re.IGNORECASE),
+        explanation=(
+            "**Docker daemon reported an error.**\n\n"
+            "**Fix** (depends on the message):\n"
+            "- **no space left**: `docker system prune` to free disk space\n"
+            "- **no such file or directory**: check image name and tag spelling\n"
+            "- **manifest unknown**: the tag doesn't exist — check the registry for available tags\n"
+            "- **pull access denied**: run `docker login` for private registries\n\n"
+            "**Gotcha**: `manifest unknown` often means a typo in the tag name — "
+            "check the registry (Docker Hub, ECR, etc.) for the exact available tags."
+        ),
+    ),
+    Pattern(
+        title="Docker — Exec Format Error",
+        regex=re.compile(r"standard_init_linux\.go:\d+: exec user process caused: exec format error", re.IGNORECASE),
+        explanation=(
+            "**The binary inside the container was built for a different CPU architecture.**\n\n"
+            "**Fix**: Build for the target platform explicitly:\n"
+            "```bash\ndocker buildx build --platform linux/amd64 -t myimage .\n```\n\n"
+            "**Gotcha**: Apple Silicon Macs build `arm64` images by default — "
+            "these won't run on `x86_64` hosts (like most cloud VMs) unless you specify `--platform linux/amd64`."
+        ),
+    ),
+    # ── pip / npm ─────────────────────────────────────────────────────────────
+    Pattern(
+        title="pip — Dependency Resolution Failed",
+        regex=re.compile(r"ERROR: ResolutionImpossible", re.IGNORECASE),
+        explanation=(
+            "**pip can't find a set of package versions that satisfies all constraints.**\n\n"
+            "**Fix**:\n"
+            "```bash\npip install --upgrade pip   # ensure pip is up to date\n# Use a fresh virtualenv:\npython -m venv .venv && source .venv/bin/activate\n```\n"
+            "Consider using `pip-tools` or `poetry` for better dependency management.\n\n"
+            "**Gotcha**: Use `pip show <package>` to see which packages are causing the constraint conflict — "
+            "look for overlapping version requirements."
+        ),
+    ),
+    Pattern(
+        title="pip — Python Version Mismatch",
+        regex=re.compile(r"ERROR: Package '([^']+)' requires a different Python", re.IGNORECASE),
+        explanation=(
+            "**Package `{0}` doesn't support your current Python version.**\n\n"
+            "**Fix**:\n"
+            "1. Check the package's supported Python versions on PyPI\n"
+            "2. Upgrade Python to a supported version, or pin to an older package version\n\n"
+            "**Gotcha**: Run `python --version` and `pip --version` to confirm which Python pip is using — "
+            "you may have multiple Python installations."
+        ),
+    ),
+    Pattern(
+        title="npm — Peer Dependency Conflict",
+        regex=re.compile(r"npm warn peer dep missing|npm error peer dep|Could not resolve dependency", re.IGNORECASE),
+        explanation=(
+            "**A package requires a peer dependency version you don't have installed.**\n\n"
+            "**Fix**: Install the required peer dependency:\n"
+            "```bash\nnpm install <peer-package>@<required-version>\n```\n"
+            "Check what version is needed:\n"
+            "```bash\nnpm info <package> peerDependencies\n```\n\n"
+            "**Gotcha**: npm 7+ installs peer deps automatically but fails on version conflicts. "
+            "Use `--legacy-peer-deps` as a last resort (it ignores peer dep checks)."
+        ),
+    ),
+    # ── Python requests ───────────────────────────────────────────────────────
+    Pattern(
+        title="Python requests — ConnectionError",
+        regex=re.compile(r"requests\.exceptions\.ConnectionError", re.IGNORECASE),
+        explanation=(
+            "**Network is unreachable or DNS lookup failed.**\n\n"
+            "**Fix**:\n"
+            "1. Check network connectivity\n"
+            "2. Verify the URL hostname is correct\n"
+            "3. Test with curl first: `curl -v <url>`\n\n"
+            "**Gotcha**: Firewalls and VPNs can silently block connections — "
+            "a successful `curl` doesn't guarantee your Python process has the same network access "
+            "(e.g. if it's running in a container or different network namespace)."
+        ),
+    ),
+    Pattern(
+        title="Python requests — Timeout",
+        regex=re.compile(r"requests\.exceptions\.Timeout|ReadTimeout|ConnectTimeout", re.IGNORECASE),
+        explanation=(
+            "**The HTTP request took longer than the timeout.**\n\n"
+            "**Fix**: Set an explicit timeout and implement retry with backoff:\n"
+            "```python\nimport requests\nfrom urllib3.util.retry import Retry\nfrom requests.adapters import HTTPAdapter\n\nsession = requests.Session()\nretry = Retry(total=3, backoff_factor=1)\nsession.mount('https://', HTTPAdapter(max_retries=retry))\nresponse = session.get(url, timeout=30)\n```\n\n"
+            "**Gotcha**: The default timeout is `None` (wait forever) — "
+            "always set an explicit timeout to prevent your program hanging indefinitely."
+        ),
+    ),
 ]
 
 

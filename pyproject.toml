@@ -22,7 +22,9 @@ classifiers = [
 dependencies = ["anthropic", "rich"]
 
 [project.urls]
+Homepage = "https://github.com/Bsel153/errex"
 Repository = "https://github.com/Bsel153/errex"
+"Bug Tracker" = "https://github.com/Bsel153/errex/issues"
 
 [project.optional-dependencies]
 dev = ["pytest"]

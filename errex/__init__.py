@@ -31,3 +31,4 @@ from ._constants import (SYSTEM_PROMPT, API_TIMEOUT, CONFIG_DEFAULTS, CONFIG_TYP
                           HTTP_CODES, ENV_VARS, ERROR_PATTERNS)
 from .patterns import match_pattern, list_patterns
 from .cli import main
+from .patterns import match_pattern, list_patterns

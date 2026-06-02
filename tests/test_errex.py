@@ -658,6 +658,7 @@ def test_match_python_module_not_found():
     assert "ModuleNotFoundError" in title
     assert "requests" in expl
 
+
 def test_match_none_type_attribute_error():
     result = ex.match_pattern("AttributeError: 'NoneType' object has no attribute 'split'")
     assert result is not None
@@ -665,8 +666,10 @@ def test_match_none_type_attribute_error():
     assert "NoneType" in title
     assert "None" in expl
 
+
 def test_no_match_unknown_error():
     assert ex.match_pattern("xyzzy: completely unknown error abc123") is None
+
 
 def test_list_patterns_returns_strings():
     titles = ex.list_patterns()
@@ -674,19 +677,23 @@ def test_list_patterns_returns_strings():
     assert len(titles) > 20
     assert all(isinstance(t, str) and t for t in titles)
 
+
 def test_match_node_cannot_find_module():
     result = ex.match_pattern("Error: Cannot find module 'express'")
     assert result is not None
     assert "express" in result[1]
+
 
 def test_match_git_not_a_repo():
     result = ex.match_pattern("fatal: not a git repository (or any of the parent directories): .git")
     assert result is not None
     assert "Git" in result[0]
 
+
 def test_match_returns_markdown():
     _, expl = ex.match_pattern("ZeroDivisionError: division by zero")
     assert "**" in expl  # markdown bold markers present
+
 
 def test_match_key_error():
     result = ex.match_pattern("KeyError: 'username'")
@@ -729,3 +736,59 @@ def test_clear_cache(tmp_path):
         n = ec.clear_cache()
         assert n == 1
         assert not (tmp_path / "cache.json").exists()
+
+
+def test_match_rust_panic():
+    result = ex.match_pattern(
+        "thread 'main' panicked at 'index out of bounds: the len is 3 but the index is 5', src/main.rs:10:5"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Rust" in title
+    assert "panic" in title.lower() or "Panic" in title
+
+
+def test_match_java_npe():
+    result = ex.match_pattern('Exception in thread "main" java.lang.NullPointerException')
+    assert result is not None
+    title, expl = result
+    assert "Java" in title
+    assert "Null" in title or "null" in expl.lower()
+
+
+def test_match_go_nil_pointer():
+    result = ex.match_pattern(
+        "panic: runtime error: invalid memory address or nil pointer dereference"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Go" in title
+    assert "nil" in expl.lower() or "Nil" in title
+
+
+def test_match_docker_copy_failed():
+    result = ex.match_pattern(
+        "COPY failed: file not found in build context or excluded by .dockerignore: stat myfile.txt: file does not exist"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Docker" in title
+    assert "COPY" in title or "copy" in expl.lower()
+
+
+def test_match_pip_resolution():
+    result = ex.match_pattern("ERROR: ResolutionImpossible for pip-backtracking")
+    assert result is not None
+    title, expl = result
+    assert "pip" in title
+    assert "Resolution" in title or "resolution" in expl.lower()
+
+
+def test_match_python_unicode():
+    result = ex.match_pattern(
+        "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Unicode" in title
+    assert "utf-8" in expl or "codec" in expl.lower()
