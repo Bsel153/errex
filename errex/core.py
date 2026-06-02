@@ -419,8 +419,8 @@ def run_bulk(
 # apply_fix helpers
 # ---------------------------------------------------------------------------
 
-def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> None:
-    """Display and apply a unified diff to filepath."""
+def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> bool:
+    """Display and apply a unified diff to filepath. Returns True on success."""
     import shutil
     import subprocess as _sp
 
@@ -438,10 +438,10 @@ def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> None:
             answer = input("\nApply this patch? [y/N] ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             output.console.print("\n[dim]Aborted.[/dim]")
-            return
+            return False
         if answer not in ("y", "yes"):
             output.console.print("[dim]Skipped.[/dim]")
-            return
+            return False
 
     bak = filepath + ".bak"
     shutil.copy2(filepath, bak)
@@ -449,14 +449,16 @@ def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> None:
     result = _sp.run(['patch', '-p0', filepath], input=diff_text, text=True, capture_output=True)
     if result.returncode == 0:
         output.console.print(f"[green]✓ Patched {filepath} (backup: {bak})[/green]")
+        return True
     else:
         output.console.print(f"[yellow]patch failed, trying manual apply…[/yellow]")
         shutil.copy2(bak, filepath)
         output.console.print(f"[red]✗ Could not apply patch automatically. Backup restored.[/red]")
+        return False
 
 
-def _apply_full_replacement(new_content: str, filepath: str, yes: bool) -> None:
-    """Display and write a full file replacement."""
+def _apply_full_replacement(new_content: str, filepath: str, yes: bool) -> bool:
+    """Display and write a full file replacement. Returns True on success."""
     import shutil
 
     output.console.print(f"\n[bold]Proposed replacement for {filepath}:[/bold]")
@@ -472,15 +474,38 @@ def _apply_full_replacement(new_content: str, filepath: str, yes: bool) -> None:
             answer = input(f"\nReplace {filepath} with this content? [y/N] ").strip().lower()
         except (KeyboardInterrupt, EOFError):
             output.console.print("\n[dim]Aborted.[/dim]")
-            return
+            return False
         if answer not in ("y", "yes"):
             output.console.print("[dim]Skipped.[/dim]")
-            return
+            return False
 
     bak = filepath + ".bak"
     shutil.copy2(filepath, bak)
     Path(filepath).write_text(new_content, encoding="utf-8")
     output.console.print(f"[green]✓ Updated {filepath} (backup: {bak})[/green]")
+    return True
+
+
+def _maybe_open_ticket(
+    error_text: str,
+    explanation: str,
+    username: str | None,
+    password: str | None,
+    product: str,
+    version: str,
+    severity: int,
+) -> None:
+    from .ticketing import open_rht_ticket
+    output.console.print("\n[yellow]Fix did not succeed — opening Red Hat support case…[/yellow]")
+    open_rht_ticket(
+        error_text,
+        explanation,
+        username=username,
+        password=password,
+        product=product,
+        version=version,
+        severity=severity,
+    )
 
 
 def apply_fix(
@@ -489,6 +514,12 @@ def apply_fix(
     lang: str | None = None,
     context: str | None = None,
     yes: bool = False,
+    open_ticket: bool = False,
+    rht_username: str | None = None,
+    rht_password: str | None = None,
+    rht_product: str = "Red Hat Enterprise Linux",
+    rht_version: str = "9.0",
+    rht_severity: int = 3,
 ) -> None:
     """Ask Claude for a fix and apply it.
 
@@ -524,16 +555,20 @@ def apply_fix(
         print()
 
         # Check for unified diff
+        fix_applied = False
         if ('--- a/' in response or ('--- ' in response and '+++ ' in response)):
-            _apply_unified_diff(response, context_path, yes)
+            fix_applied = _apply_unified_diff(response, context_path, yes)
         else:
             # Extract code block content and treat as full replacement
             code_match = _re.search(r'```(?:\w+)?\n(.*?)```', response, _re.DOTALL)
             if code_match:
-                _apply_full_replacement(code_match.group(1), context_path, yes)
+                fix_applied = _apply_full_replacement(code_match.group(1), context_path, yes)
             else:
                 output.console.print("[yellow]Could not parse a diff or code block from the response.[/yellow]")
                 output.console.print("[dim]Try running without --context to get shell commands instead.[/dim]")
+
+        if not fix_applied and open_ticket:
+            _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)
         return
 
     # --- Shell-command path (no context file) ---
@@ -554,6 +589,8 @@ def apply_fix(
 
     if not commands:
         output.console.print("[yellow]No shell commands found in the response.[/yellow]")
+        if open_ticket:
+            _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)
         return
 
     output.console.print("\n[bold]Commands to run:[/bold]")
@@ -570,10 +607,15 @@ def apply_fix(
             output.console.print("[dim]Skipped.[/dim]")
             return
 
+    any_failed = False
     for cmd in commands:
         output.console.print(f"\n[dim]$ {cmd}[/dim]")
         result = _sp.run(cmd, shell=True, text=True)
         if result.returncode != 0:
             output.console.print(f"[red]✗ Command exited {result.returncode}[/red]")
+            any_failed = True
         else:
             output.console.print(f"[green]✓ Done[/green]")
+
+    if any_failed and open_ticket:
+        _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)

@@ -2,8 +2,18 @@ import re
 
 API_TIMEOUT: int = 30  # seconds — overridden by --timeout
 
-CONFIG_DEFAULTS: dict = {"model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False}
-CONFIG_TYPES: dict = {"model": str, "brief": bool, "lang": str, "copy": bool}
+CONFIG_DEFAULTS: dict = {
+    "model": "claude-sonnet-4-6", "brief": False, "lang": None, "copy": False,
+    "rht_username": None, "rht_password": None,
+    "rht_product": "Red Hat Enterprise Linux", "rht_version": "9.0",
+    "rht_severity": 3, "rht_auto_ticket": False,
+}
+CONFIG_TYPES: dict = {
+    "model": str, "brief": bool, "lang": str, "copy": bool,
+    "rht_username": str, "rht_password": str,
+    "rht_product": str, "rht_version": str,
+    "rht_severity": int, "rht_auto_ticket": bool,
+}
 
 SYSTEM_PROMPT = """You are a senior software engineer with 15+ years of experience across Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, shell scripting, SQL, and cloud infrastructure. You specialize in debugging and explaining errors clearly to developers at all levels.
 

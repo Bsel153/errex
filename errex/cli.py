@@ -205,6 +205,19 @@ def main() -> None:
                         help="get a fix command from Claude and run it (asks for confirmation)")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="auto-confirm fix commands from --fix-apply without prompting")
+    parser.add_argument("--open-ticket", action="store_true", dest="open_ticket",
+                        help="open a Red Hat Customer Portal support case with this error")
+    parser.add_argument("--rht-username", dest="rht_username", default=None, metavar="USER",
+                        help="Red Hat username (or set RHT_USERNAME env var)")
+    parser.add_argument("--rht-password", dest="rht_password", default=None, metavar="PASS",
+                        help="Red Hat password (or set RHT_PASSWORD env var)")
+    parser.add_argument("--rht-severity", dest="rht_severity", type=int, default=None,
+                        choices=[1, 2, 3, 4], metavar="1-4",
+                        help="ticket severity: 1=Urgent 2=High 3=Normal 4=Low (default: 3)")
+    parser.add_argument("--rht-product", dest="rht_product", default=None, metavar="NAME",
+                        help="Red Hat product name for the ticket")
+    parser.add_argument("--rht-version", dest="rht_version", default=None, metavar="VER",
+                        help="product version for the ticket")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -595,12 +608,19 @@ def main() -> None:
         print(f"::error::{first_line}")
 
     if args.fix_apply:
+        cfg = load_config()
         apply_fix(
             error_text,
             model=args.model,
             lang=args.lang,
-            context=args.context,  # pass file path so apply_fix can read+patch it
+            context=args.context,
             yes=args.yes,
+            open_ticket=args.open_ticket or cfg.get("rht_auto_ticket", False),
+            rht_username=args.rht_username or cfg.get("rht_username"),
+            rht_password=args.rht_password or cfg.get("rht_password"),
+            rht_product=args.rht_product or cfg.get("rht_product", "Red Hat Enterprise Linux"),
+            rht_version=args.rht_version or cfg.get("rht_version", "9.0"),
+            rht_severity=args.rht_severity or cfg.get("rht_severity", 3),
         )
         return
 
@@ -629,6 +649,18 @@ def main() -> None:
         no_cache=args.no_cache,
         use_cache=not args.no_cache,
     )
+
+    if args.open_ticket:
+        from .ticketing import open_rht_ticket
+        cfg = load_config()
+        open_rht_ticket(
+            error_text,
+            username=args.rht_username or cfg.get("rht_username"),
+            password=args.rht_password or cfg.get("rht_password"),
+            product=args.rht_product or cfg.get("rht_product", "Red Hat Enterprise Linux"),
+            version=args.rht_version or cfg.get("rht_version", "9.0"),
+            severity=args.rht_severity or cfg.get("rht_severity", 3),
+        )
 
     if args.ci:
         sys.exit(1)

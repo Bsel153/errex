@@ -892,3 +892,135 @@ def test_apply_fix_no_context_shell_path(tmp_path, monkeypatch):
     call_kwargs = mock_client.messages.stream.call_args.kwargs
     prompt = call_kwargs["messages"][0]["content"]
     assert "shell command" in prompt or "fix" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# RHT ticketing
+# ---------------------------------------------------------------------------
+
+class TestRHTTicketing:
+    def _mock_urlopen(self, case_number="01234567"):
+        """Return a context-manager mock that simulates a successful RHT API response."""
+        import urllib.request
+        response_data = json.dumps({
+            "caseNumber": case_number,
+            "caseUri": f"https://access.redhat.com/support/cases/#/case/{case_number}",
+        }).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = response_data
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return MagicMock(return_value=mock_resp)
+
+    def test_open_ticket_success(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen("01234567")
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = ex.open_rht_ticket(
+            "SomeError: kaboom",
+            username="user@redhat.com",
+            password="secret",
+        )
+        assert result is not None
+        case_number, case_url = result
+        assert case_number == "01234567"
+        assert "01234567" in case_url
+
+    def test_open_ticket_posts_to_correct_url(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="u", password="p")
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "https://api.access.redhat.com/rs/cases"
+        assert req.method == "POST"
+
+    def test_open_ticket_sends_auth_header(self, monkeypatch):
+        import base64
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="myuser", password="mypass")
+        req = mock_urlopen.call_args[0][0]
+        expected = "Basic " + base64.b64encode(b"myuser:mypass").decode()
+        assert req.get_header("Authorization") == expected
+
+    def test_open_ticket_includes_error_text(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("SpecialError: unique_string_xyz", username="u", password="p")
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data)
+        assert "unique_string_xyz" in body["description"]
+
+    def test_open_ticket_uses_severity(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="u", password="p", severity=1)
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data)
+        assert "Urgent" in body["severity"]["name"]
+
+    def test_open_ticket_reads_env_vars(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        monkeypatch.setenv("RHT_USERNAME", "envuser")
+        monkeypatch.setenv("RHT_PASSWORD", "envpass")
+        result = ex.open_rht_ticket("err")
+        assert result is not None
+
+    def test_open_ticket_missing_creds_returns_none(self, monkeypatch):
+        monkeypatch.delenv("RHT_USERNAME", raising=False)
+        monkeypatch.delenv("RHT_PASSWORD", raising=False)
+        result = ex.open_rht_ticket("err", username="", password="")
+        assert result is None
+
+    def test_open_ticket_http_error_returns_none(self, monkeypatch):
+        import urllib.error
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            MagicMock(side_effect=urllib.error.HTTPError(
+                url="", code=401, msg="Unauthorized", hdrs={}, fp=None
+            )),
+        )
+        result = ex.open_rht_ticket("err", username="u", password="wrong")
+        assert result is None
+
+    def test_open_ticket_network_error_returns_none(self, monkeypatch):
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            MagicMock(side_effect=OSError("connection refused")),
+        )
+        result = ex.open_rht_ticket("err", username="u", password="p")
+        assert result is None
+
+    def test_apply_fix_triggers_ticket_on_no_commands(self, monkeypatch):
+        """When fix produces no commands and open_ticket=True, ticket should be opened."""
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.text_stream = iter(["No commands here, just prose."])
+        mock_final = MagicMock()
+        mock_final.usage.input_tokens = 5
+        mock_final.usage.output_tokens = 5
+        mock_stream.get_final_message.return_value = mock_final
+        mock_client = MagicMock()
+        mock_client.messages.stream.return_value = mock_stream
+
+        ticket_calls = []
+
+        def fake_open_ticket(error_text, explanation="", *, username=None, password=None, **kw):
+            ticket_calls.append(error_text)
+            return None
+
+        monkeypatch.setattr("errex.ticketing.open_rht_ticket", fake_open_ticket)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                ex.apply_fix(
+                    "SomeError: unfixable",
+                    model="claude-sonnet-4-6",
+                    open_ticket=True,
+                    rht_username="u",
+                    rht_password="p",
+                )
+
+        assert len(ticket_calls) == 1
+        assert "SomeError" in ticket_calls[0]

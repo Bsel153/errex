@@ -246,3 +246,35 @@ def test_doctor_no_crash(tmp_path):
                                              "ANTHROPIC_API_KEY": ""})
     assert "Traceback" not in r.stdout
     assert "Traceback" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# RHT ticketing flags
+# ---------------------------------------------------------------------------
+
+def test_open_ticket_flag_accepted():
+    r = run(["--open-ticket", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_rht_username_flag_accepted():
+    r = run(["--rht-username", "user@redhat.com", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_rht_severity_flag_accepted():
+    r = run(["--rht-severity", "2", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_open_ticket_no_creds_prints_helpful_message():
+    """--open-ticket without credentials should print a message, not crash."""
+    r = run(
+        ["--open-ticket"],
+        input="SomeError: something went wrong\n",
+        env={"ANTHROPIC_API_KEY": "", "RHT_USERNAME": "", "RHT_PASSWORD": ""},
+    )
+    combined = r.stdout + r.stderr
+    assert "Traceback" not in combined
+    # Should mention missing API key or missing RHT credentials
+    assert "ANTHROPIC_API_KEY" in combined or "RHT_USERNAME" in combined or "RHT_PASSWORD" in combined

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Import submodules so ex.history, ex.config etc. are accessible (needed for test patches)
-from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache
+from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing
 
 # Re-export paths for backward compat
 from ._paths import HISTORY_FILE, CONFIG_FILE
@@ -30,4 +30,5 @@ from .watch import watch_file
 from ._constants import (SYSTEM_PROMPT, API_TIMEOUT, CONFIG_DEFAULTS, CONFIG_TYPES, EXIT_CODES,
                           HTTP_CODES, ENV_VARS, ERROR_PATTERNS)
 from .patterns import match_pattern, list_patterns
+from .ticketing import open_rht_ticket
 from .cli import main
