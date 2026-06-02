@@ -282,3 +282,22 @@ def test_open_ticket_no_creds_prints_helpful_message():
 def test_web_auth_flag_accepted():
     r = run(["--auth", "user:pass", "--help"])
     assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Digest
+# ---------------------------------------------------------------------------
+
+def test_digest_exits_zero(tmp_path):
+    r = run(["--digest"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+
+
+def test_digest_no_history_message(tmp_path):
+    r = run(["--digest"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert "0" in r.stdout or "No " in r.stdout
+
+
+def test_digest_since_flag_accepted(tmp_path):
+    r = run(["--digest", "--digest-since", "48"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0

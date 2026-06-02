@@ -66,13 +66,13 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", dest="json_output", help="output structured JSON")
     parser.add_argument("--fix", action="store_true", help="output only the fix command, no explanation")
     parser.add_argument("--watch", metavar="LOGFILE", help="watch a log file and explain errors as they appear")
+    parser.add_argument("--host", default="127.0.0.1", metavar="ADDR",
+                        help="host to bind the web UI to (default: 127.0.0.1; use 0.0.0.0 for network access)")
     parser.add_argument("--history", nargs="?", const="", metavar="SEARCH", help="show past explanations, optionally filtered by a search term")
     parser.add_argument("--install-shell", action="store_true", help="add errex-last() function to your shell config")
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
-    parser.add_argument("--host", default="127.0.0.1", metavar="HOST",
-                        help="host to bind the web UI to (default: 127.0.0.1)")
     parser.add_argument("--auth", default=None, metavar="USER:PASS",
                         help="enable HTTP Basic auth on the web UI (format: user:password)")
     parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
@@ -151,6 +151,12 @@ def main() -> None:
                         help="browse recent history with a numbered picker")
     parser.add_argument("--webhook", metavar="URL",
                         help="POST the explanation as JSON to a URL (Slack, Discord, or generic)")
+    parser.add_argument("--digest", action="store_true",
+                        help="print a digest of recent errors from history")
+    parser.add_argument("--digest-since", dest="digest_since", type=int, default=24, metavar="HOURS",
+                        help="digest window in hours (default: 24)")
+    parser.add_argument("--digest-webhook", dest="digest_webhook", default=None, metavar="URL",
+                        help="send digest to a Slack/Discord webhook URL")
     parser.add_argument("--find-name", metavar="NAME", dest="find_name",
                         help="retrieve a history entry saved with --save-as NAME")
     parser.add_argument("--timeout", metavar="N", type=int, default=30,
@@ -458,6 +464,18 @@ def main() -> None:
             show_tokens=args.tokens,
             copy=args.copy or False,
         )
+        return
+
+    if args.digest:
+        from .digest import generate_digest, format_digest_text, send_digest
+        d = generate_digest(since_hours=args.digest_since)
+        output.console.print(format_digest_text(d))
+        if args.digest_webhook:
+            ok = send_digest(args.digest_webhook, d)
+            if ok:
+                output.console.print("[green]✓ Digest sent to webhook[/green]")
+            else:
+                output.console.print("[red]✗ Failed to send digest to webhook[/red]")
         return
 
     if args.stats:
