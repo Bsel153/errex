@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Import submodules so ex.history, ex.config etc. are accessible (needed for test patches)
-from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing
+from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing, digest
 
 # Re-export paths for backward compat
 from ._paths import HISTORY_FILE, CONFIG_FILE
@@ -26,6 +26,7 @@ from .utils import (read_file, get_error_input, extract_error_type, _parse_since
                     share_explanation, post_webhook, _detect_yaml_type, _error_fingerprint,
                     search_github_issues)
 from .output import show_token_usage, show_perf, copy_to_clipboard
+from .digest import generate_digest, format_digest_text, format_digest_slack, send_digest
 from .watch import watch_file
 from ._constants import (SYSTEM_PROMPT, API_TIMEOUT, CONFIG_DEFAULTS, CONFIG_TYPES, EXIT_CODES,
                           HTTP_CODES, ENV_VARS, ERROR_PATTERNS)

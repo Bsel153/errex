@@ -1024,3 +1024,114 @@ class TestRHTTicketing:
 
         assert len(ticket_calls) == 1
         assert "SomeError" in ticket_calls[0]
+
+
+# ---------------------------------------------------------------------------
+# TestDigest
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta
+
+
+def _write_history_digest(path, entries):
+    with open(path, "w") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+
+
+def _ts(hours_ago=0):
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+
+
+from datetime import datetime, timezone
+
+
+class TestDigest:
+    def test_generate_digest_empty_history(self, tmp_path, monkeypatch):
+        missing = tmp_path / "no_history.jsonl"
+        monkeypatch.setattr("errex.history.HISTORY_FILE", missing)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", missing)
+        result = ex.generate_digest()
+        assert result["total"] == 0
+
+    def test_generate_digest_counts_entries(self, tmp_path, monkeypatch):
+        hf = tmp_path / "history.jsonl"
+        entries = [
+            {"timestamp": _ts(1), "error": "TypeError: x", "model": "m", "brief": False},
+            {"timestamp": _ts(2), "error": "ValueError: y", "model": "m", "brief": False},
+            {"timestamp": _ts(3), "error": "KeyError: z", "model": "m", "brief": False},
+        ]
+        _write_history_digest(hf, entries)
+        monkeypatch.setattr("errex.history.HISTORY_FILE", hf)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", hf)
+        result = ex.generate_digest(since_hours=24)
+        assert result["total"] == 3
+
+    def test_generate_digest_filters_old_entries(self, tmp_path, monkeypatch):
+        hf = tmp_path / "history.jsonl"
+        entries = [
+            {"timestamp": _ts(48), "error": "OldError: gone", "model": "m", "brief": False},
+            {"timestamp": _ts(1), "error": "TypeError: recent", "model": "m", "brief": False},
+        ]
+        _write_history_digest(hf, entries)
+        monkeypatch.setattr("errex.history.HISTORY_FILE", hf)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", hf)
+        result = ex.generate_digest(since_hours=24)
+        assert result["total"] == 1
+
+    def test_format_digest_text_zero(self):
+        d = ex.generate_digest.__module__
+        digest = {
+            "window_hours": 24,
+            "total": 0,
+            "error_types": {},
+            "models": {},
+            "avg_rating": None,
+            "rated_count": 0,
+            "recent": [],
+        }
+        result = ex.format_digest_text(digest)
+        assert "0" in result
+
+    def test_format_digest_text_nonzero(self):
+        digest = {
+            "window_hours": 24,
+            "total": 5,
+            "error_types": {"TypeError": 3, "ValueError": 2},
+            "models": {"claude-sonnet-4-6": 5},
+            "avg_rating": 4.0,
+            "rated_count": 2,
+            "recent": [],
+        }
+        result = ex.format_digest_text(digest)
+        assert "5" in result
+
+    def test_format_digest_slack_structure(self):
+        digest = {
+            "window_hours": 24,
+            "total": 3,
+            "error_types": {"TypeError": 2, "KeyError": 1},
+            "models": {"m": 3},
+            "avg_rating": None,
+            "rated_count": 0,
+            "recent": [],
+        }
+        result = ex.format_digest_slack(digest)
+        assert isinstance(result, dict)
+        assert "blocks" in result
+
+    def test_send_digest_success(self, monkeypatch):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: mock_resp)
+        result = ex.send_digest("http://example.com", {})
+        assert result is True
+
+    def test_send_digest_failure(self, monkeypatch):
+        def raise_oserror(*a, **kw):
+            raise OSError("network error")
+        monkeypatch.setattr("urllib.request.urlopen", raise_oserror)
+        result = ex.send_digest("http://example.com", {})
+        assert result is False
