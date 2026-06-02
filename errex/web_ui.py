@@ -154,6 +154,23 @@ HTML = r"""<!DOCTYPE html>
     .bar-count { font-size: 0.75rem; color: var(--muted); width: 24px; text-align: right; flex-shrink: 0; }
     .muted { color: var(--muted); font-size: 0.85rem; }
 
+    /* ── Stats tab ── */
+    .tab-bar { display:flex; gap:0.25rem; margin-bottom:1rem; border-bottom:1px solid var(--border); }
+    .sbar-tab { background:none; border:none; border-bottom:2px solid transparent; color:var(--muted);
+                cursor:pointer; font-size:0.85rem; padding:0.45rem 0.9rem; transition:color .2s,border-color .2s; }
+    .sbar-tab:hover { color:var(--text); }
+    .sbar-tab.active { border-bottom-color:var(--accent); color:var(--accent); }
+    .stat-total { font-size:2.2rem; font-weight:700; color:var(--accent); margin-bottom:1rem; }
+    .stat-total span { font-size:0.9rem; font-weight:400; color:var(--muted); margin-left:0.3rem; }
+    .stat-section { font-size:0.72rem; font-weight:600; color:var(--muted); letter-spacing:.06em;
+                    text-transform:uppercase; margin:1.1rem 0 0.5rem; }
+    .bar-row { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.35rem; }
+    .bar-label { font-size:0.78rem; color:#cbd5e1; width:130px; flex-shrink:0;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .bar-track { flex:1; background:#1e2130; border:1px solid var(--border); border-radius:3px; height:9px; overflow:hidden; }
+    .bar-fill { height:100%; background:var(--accent); border-radius:3px; transition:width .4s ease; }
+    .bar-count { font-size:0.78rem; color:var(--muted); width:26px; text-align:right; flex-shrink:0; }
+
     /* ── Mobile ── */
     @media (max-width: 680px) {
       .app { grid-template-columns: 1fr; }

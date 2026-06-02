@@ -93,7 +93,7 @@ def test_explain_error_exits_without_api_key():
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     with patch.dict(os.environ, env, clear=True):
         with pytest.raises(SystemExit) as exc:
-            ex.explain_error("some error", model="claude-sonnet-4-6")
+            ex.explain_error("some error", model="claude-sonnet-4-6", no_cache=True, use_cache=False)
     assert exc.value.code == 1
 
 
