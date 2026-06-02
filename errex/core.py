@@ -13,6 +13,7 @@ from . import output, _constants
 from ._paths import HISTORY_FILE
 from .history import save_history
 from .patterns import match_pattern
+from .cache import get_cached, save_cached
 from .utils import (read_file, get_error_input, share_explanation,
                     post_webhook, search_github_issues, notify, extract_snippet,
                     format_json_error, redact_secrets, get_env_info)
@@ -117,6 +118,7 @@ def explain_error(
     top_n: int | None = None,
     perf: bool = False,
     no_cache: bool = False,
+    use_cache: bool = True,
 ) -> None:
     """Explain an error, render output, save history."""
     # Try the local pattern cache before hitting the API
@@ -143,6 +145,22 @@ def explain_error(
         output.console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
 
+    if use_cache and not json_output and not fix and not dry_run:
+        cached = get_cached(error_text, model, brief, terse)
+        if cached:
+            from rich.markdown import Markdown
+            output.console.print(Markdown(cached))
+            print()
+            output.console.print("[dim]📦 cached response — use --no-cache to call Claude[/dim]")
+            output.console.rule(style="dim")
+            print()
+            save_history(error_text, cached, model, brief, name=save_as)
+            if output_file:
+                Path(output_file).write_text(cached, encoding="utf-8")
+            if copy:
+                output.copy_to_clipboard(cached)
+            return
+
     response, in_tok, out_tok, elapsed = call_claude(
         error_text, model=model, brief=brief, terse=terse, json_output=json_output,
         fix=fix, lang=lang, context=context, translate=translate, dry_run=dry_run,
@@ -151,6 +169,9 @@ def explain_error(
 
     if dry_run:
         return
+
+    if use_cache and response and not json_output and not fix:
+        save_cached(error_text, model, brief, terse, response)
 
     if json_output:
         try:
@@ -391,3 +412,53 @@ def run_bulk(
             copy=copy,
             show_tokens=show_tokens,
         )
+
+
+def apply_fix(
+    error_text: str,
+    model: str,
+    lang: str | None = None,
+    context: str | None = None,
+    yes: bool = False,
+) -> None:
+    """Get fix command from Claude and run it (with confirmation)."""
+    output.console.rule("[bold cyan]errex — Fix[/bold cyan]")
+    print()
+    output.console.print("[dim]Asking Claude for a fix command…[/dim]\n")
+
+    response, _, _, _ = call_claude(
+        error_text, model=model, fix=True, lang=lang, context=context
+    )
+    print()
+
+    # Extract command(s) from code blocks or plain text
+    import re as _re
+    code_blocks = _re.findall(r"```(?:bash|sh|shell)?\s*(.*?)```", response, _re.DOTALL)
+    if code_blocks:
+        commands = [c.strip() for c in code_blocks if c.strip()]
+    else:
+        # Fall back to lines that look like commands
+        commands = [l.strip() for l in response.splitlines()
+                    if l.strip() and not l.startswith("#") and not l.startswith("//")]
+
+    if not commands:
+        output.console.print("[yellow]No runnable command found in the fix suggestion.[/yellow]")
+        return
+
+    for cmd in commands:
+        output.console.print(f"\n[bold]Command:[/bold] [cyan]{cmd}[/cyan]")
+        if not yes:
+            try:
+                answer = input("Run this? [y/N] ").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                output.console.print("\n[dim]Aborted.[/dim]")
+                return
+            if answer not in ("y", "yes"):
+                output.console.print("[dim]Skipped.[/dim]")
+                continue
+        import subprocess as _sp
+        result = _sp.run(cmd, shell=True, text=True)
+        if result.returncode == 0:
+            output.console.print("[green]✓ Done.[/green]")
+        else:
+            output.console.print(f"[red]✗ Exited with code {result.returncode}[/red]")

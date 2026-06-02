@@ -692,3 +692,40 @@ def test_match_key_error():
     result = ex.match_pattern("KeyError: 'username'")
     assert result is not None
     assert "KeyError" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# Response cache
+# ---------------------------------------------------------------------------
+
+def test_cache_miss_returns_none(tmp_path):
+    from errex.cache import get_cached
+    # Should return None when no cache file exists
+    # We can't easily override CACHE_FILE without patching, so just verify
+    # that a fresh get_cached returns None for a nonsense key
+    # (real cache file may exist on the test machine, so patch it)
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        assert get_cached("no such error", "claude-sonnet-4-6", False, False) is None
+
+def test_cache_roundtrip(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "test response")
+        result = ec.get_cached("test error", "claude-sonnet-4-6", False, False)
+        assert result == "test response"
+
+def test_cache_different_model_misses(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "sonnet response")
+        result = ec.get_cached("test error", "claude-opus-4-8", False, False)
+        assert result is None
+
+def test_clear_cache(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "response")
+        n = ec.clear_cache()
+        assert n == 1
+        assert not (tmp_path / "cache.json").exists()

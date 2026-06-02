@@ -15,7 +15,8 @@ from .history import (save_history, show_history, show_recent, find_similar, cle
                       find_by_name, list_named, export_csv, search_history, dedup_history,
                       show_last, pin_entry)
 from .core import (call_claude, explain_error, compare_errors, chat_loop, ask_about_last,
-                   retry_last, run_bulk)
+                   retry_last, run_bulk, apply_fix)
+from .cache import clear_cache, cache_stats
 from .code_tools import (lint_file, explain_code, generate_test, explain_diff, explain_inline,
                          grep_and_explain, summarize_log)
 from .explainers import (explain_exit_code, explain_http, explain_cron, explain_sql,
@@ -193,9 +194,15 @@ def main() -> None:
     parser.add_argument("--last", action="store_true",
                         help="print the last explanation from history without re-running Claude")
     parser.add_argument("--no-cache", action="store_true", dest="no_cache",
-                        help="skip the local pattern cache and always call Claude")
+                        help="skip the local pattern cache and response cache; always call Claude")
     parser.add_argument("--list-patterns", action="store_true", dest="list_patterns",
                         help="show all built-in offline error patterns")
+    parser.add_argument("--clear-cache", action="store_true", dest="clear_cache_flag",
+                        help="clear the response cache (~/.errex_response_cache.json)")
+    parser.add_argument("--fix-apply", action="store_true", dest="fix_apply",
+                        help="get a fix command from Claude and run it (asks for confirmation)")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="auto-confirm fix commands from --fix-apply without prompting")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -212,6 +219,11 @@ def main() -> None:
 
     if args.rate is not None:
         rate_last(args.rate)
+        return
+
+    if args.clear_cache_flag:
+        n = clear_cache()
+        output.console.print(f"[green]Cache cleared ({n} entries).[/green]")
         return
 
     if args.bulk:
@@ -580,6 +592,16 @@ def main() -> None:
         first_line = error_text.splitlines()[0][:200] if error_text else "error"
         print(f"::error::{first_line}")
 
+    if args.fix_apply:
+        apply_fix(
+            error_text,
+            model=args.model,
+            lang=args.lang,
+            context=context_text,
+            yes=args.yes,
+        )
+        return
+
     explain_error(
         error_text,
         model=args.model,
@@ -603,6 +625,7 @@ def main() -> None:
         top_n=args.top,
         perf=args.perf,
         no_cache=args.no_cache,
+        use_cache=not args.no_cache,
     )
 
     if args.ci:

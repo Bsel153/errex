@@ -213,3 +213,15 @@ def test_no_cache_flag_accepted():
     r = run(["--no-cache", "--list-patterns"])
     assert "unrecognized" not in r.stderr.lower()
     assert r.returncode == 0
+
+
+def test_clear_cache_exits_zero():
+    r = run(["--clear-cache"])
+    assert r.returncode == 0
+    assert "cache" in r.stdout.lower() or "Cache" in r.stdout
+
+
+def test_fix_apply_flag_accepted():
+    # Just verify --fix-apply is a recognized flag (no error text = exits 1 from usage, not "unrecognized")
+    r = run(["--fix-apply", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
