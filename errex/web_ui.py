@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -128,6 +129,31 @@ HTML = r"""<!DOCTYPE html>
                display: flex; justify-content: space-between; }
     .he-empty { font-size: 0.8rem; color: var(--muted); text-align: center; padding: 1.25rem 0; }
 
+
+    /* ── Sidebar tab bar ── */
+    .sbar-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0.65rem; }
+    .sbar-tab {
+      background: none; border: none; border-bottom: 2px solid transparent;
+      color: var(--muted); cursor: pointer; font-size: 0.78rem; font-weight: 500;
+      padding: 0.35rem 0.75rem; transition: color 0.15s, border-color 0.15s;
+    }
+    .sbar-tab:hover { background: none; color: var(--text); }
+    .sbar-tab.active { border-bottom-color: var(--accent); color: var(--accent); }
+    /* ── Stats ── */
+    .stat-total { font-size: 2.2rem; font-weight: 700; color: var(--accent);
+                  margin-bottom: 1rem; line-height: 1.1; }
+    .stat-total span { font-size: 0.9rem; font-weight: 400; color: var(--muted); margin-left: 0.35rem; }
+    .stat-section { font-size: 0.7rem; font-weight: 600; color: var(--muted);
+                    letter-spacing: 0.06em; text-transform: uppercase; margin: 1rem 0 0.5rem; }
+    .bar-row { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.35rem; }
+    .bar-label { font-size: 0.75rem; color: #cbd5e1; width: 130px; flex-shrink: 0;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: var(--panel); border: 1px solid var(--border);
+                 border-radius: 3px; height: 8px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.4s ease; }
+    .bar-count { font-size: 0.75rem; color: var(--muted); width: 24px; text-align: right; flex-shrink: 0; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+
     /* ── Mobile ── */
     @media (max-width: 680px) {
       .app { grid-template-columns: 1fr; }
@@ -171,8 +197,14 @@ HTML = r"""<!DOCTYPE html>
   </main>
 
   <aside class="sidebar">
-    <h2>History</h2>
-    <div id="hist"><p class="he-empty">Loading…</p></div>
+    <div class="sbar-tabs">
+      <button class="sbar-tab active" onclick="switchTab('history')">History</button>
+      <button class="sbar-tab" onclick="switchTab('stats')">Stats</button>
+    </div>
+    <div id="history-content">
+      <div id="hist"><p class="he-empty">Loading…</p></div>
+    </div>
+    <div id="stats-content" style="display:none"></div>
   </aside>
 </div>
 
@@ -309,6 +341,55 @@ HTML = r"""<!DOCTYPE html>
     if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') explain();
   });
 
+
+  // ── Stats tab ──
+  async function loadStats() {
+    const r = await fetch('/stats');
+    const d = await r.json();
+    const el = document.getElementById('stats-content');
+    if (!d.total) { el.innerHTML = '<p class="muted">No history yet.</p>'; return; }
+
+    let html = `<div class="stat-total">${d.total} <span>explanations</span></div>`;
+
+    if (Object.keys(d.error_types).length) {
+      html += '<div class="stat-section">Top error types</div>';
+      const max = Math.max(...Object.values(d.error_types));
+      for (const [k, v] of Object.entries(d.error_types).slice(0, 8)) {
+        const pct = Math.round(v / max * 100);
+        html += `<div class="bar-row"><span class="bar-label">${k}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <span class="bar-count">${v}</span></div>`;
+      }
+    }
+
+    if (Object.keys(d.models).length) {
+      html += '<div class="stat-section">Models</div>';
+      const maxM = Math.max(...Object.values(d.models));
+      for (const [k, v] of Object.entries(d.models)) {
+        const pct = Math.round(v / maxM * 100);
+        html += `<div class="bar-row"><span class="bar-label">${k}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div></div>
+          <span class="bar-count">${v}</span></div>`;
+      }
+    }
+
+    if (Object.keys(d.daily).length) {
+      html += '<div class="stat-section">Activity (last 14 days)</div>';
+      for (const [day, cnt] of Object.entries(d.daily)) {
+        html += `<div class="bar-row"><span class="bar-label">${day}</span><span class="bar-count">${cnt}</span></div>`;
+      }
+    }
+
+    el.innerHTML = html;
+  }
+
+  function switchTab(name) {
+    document.getElementById('history-content').style.display = name === 'history' ? '' : 'none';
+    document.getElementById('stats-content').style.display = name === 'stats' ? '' : 'none';
+    document.querySelectorAll('.sbar-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === name));
+    if (name === 'stats') loadStats();
+  }
+
   loadHist();
 </script>
 </body>
@@ -317,12 +398,66 @@ HTML = r"""<!DOCTYPE html>
 
 # ─── HTTP Handler ─────────────────────────────────────────────────────────────
 
+
+def _compute_stats() -> dict:
+    from collections import Counter
+    entries = []
+    if _HISTORY_FILE.exists():
+        with open(_HISTORY_FILE) as f:
+            for line in f:
+                if line.strip():
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+    if not entries:
+        return {"total": 0, "error_types": {}, "models": {}, "daily": {}}
+    from .utils import extract_error_type
+    error_types = Counter(extract_error_type(e.get("error", "")) for e in entries)
+    models = Counter(e.get("model", "unknown") for e in entries)
+    daily = Counter(e["timestamp"][:10] for e in entries if "timestamp" in e)
+    return {
+        "total": len(entries),
+        "error_types": dict(error_types.most_common(10)),
+        "models": dict(models),
+        "daily": dict(sorted(daily.items())[-14:]),  # last 14 days
+    }
+
+
+def _make_handler(auth_token: str | None):
+    class _H(Handler):
+        _auth = auth_token  # base64-encoded "user:pass", or None
+    return _H
+
+
 class Handler(BaseHTTPRequestHandler):
+    _auth: str | None = None
+
     def log_message(self, fmt, *args):
         pass  # suppress default access log
 
+    def _check_auth(self) -> bool:
+        """Return True if auth passes (or auth is disabled). Send 401 and return False otherwise."""
+        if not self._auth:
+            return True
+        given = self.headers.get("Authorization", "")
+        expected = "Basic " + self._auth
+        if given != expected:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="errex"')
+            self.end_headers()
+            return False
+        return True
+
     def do_GET(self):
+        if not self._check_auth():
+            return
+
         path = urlparse(self.path).path
+
+        if path == "/stats":
+            self._json(_compute_stats())
+            return
 
         if path == "/history":
             entries = []
@@ -348,6 +483,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(HTML.encode())
 
     def do_POST(self):
+        if not self._check_auth():
+            return
+
         if urlparse(self.path).path != "/explain":
             self.send_response(404)
             self.end_headers()
@@ -432,8 +570,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def serve(host: str = "127.0.0.1", port: int = 7337) -> None:
-    server = HTTPServer((host, port), Handler)
+def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None) -> None:
+    """auth format: 'user:password'"""
+    token = base64.b64encode(auth.encode()).decode() if auth else None
+    server = HTTPServer((host, port), _make_handler(token))
     print(f"errex web UI → http://{host}:{port}  (Ctrl+C to stop)")
     try:
         server.serve_forever()

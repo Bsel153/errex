@@ -1024,3 +1024,23 @@ class TestRHTTicketing:
 
         assert len(ticket_calls) == 1
         assert "SomeError" in ticket_calls[0]
+
+# ---------------------------------------------------------------------------
+# TestWebAuth
+# ---------------------------------------------------------------------------
+
+class TestWebAuth:
+    def test_compute_stats_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", tmp_path / "h.jsonl")
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 0
+
+    def test_compute_stats_counts(self, tmp_path, monkeypatch):
+        import json
+        h = tmp_path / "h.jsonl"
+        h.write_text(json.dumps({"error": "ModuleNotFoundError: foo", "timestamp": "2026-06-01T12:00:00"}) + "\n")
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", h)
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 1

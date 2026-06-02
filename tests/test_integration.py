@@ -278,3 +278,7 @@ def test_open_ticket_no_creds_prints_helpful_message():
     assert "Traceback" not in combined
     # Should mention missing API key or missing RHT credentials
     assert "ANTHROPIC_API_KEY" in combined or "RHT_USERNAME" in combined or "RHT_PASSWORD" in combined
+
+def test_web_auth_flag_accepted():
+    r = run(["--auth", "user:pass", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
