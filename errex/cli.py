@@ -466,7 +466,6 @@ def main() -> None:
 
     if args.digest:
         from .digest import generate_digest, format_digest_text, send_digest
-        from . import output
         d = generate_digest(since_hours=args.digest_since)
         output.console.print(format_digest_text(d))
         if args.digest_webhook:
