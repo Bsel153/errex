@@ -70,6 +70,12 @@ errex --list-patterns          # show all 71 built-in patterns in a table
 | `--fix` | Output only the fix command, no explanation |
 | `--fix-apply` | Get a fix command from Claude and run it (prompts for confirmation) |
 | `--yes` / `-y` | Auto-confirm `--fix-apply` without prompting |
+| `--open-ticket` | Open a Red Hat Customer Portal support case with this error |
+| `--rht-username USER` | Red Hat username (or set `RHT_USERNAME` env var) |
+| `--rht-password PASS` | Red Hat password (or set `RHT_PASSWORD` env var) |
+| `--rht-severity 1-4` | Ticket severity: 1=Urgent 2=High 3=Normal 4=Low (default: 3) |
+| `--rht-product NAME` | Red Hat product name for the ticket |
+| `--rht-version VER` | Product version for the ticket |
 | `--lang LANG` | Language hint when the error is ambiguous (e.g. `rust`, `go`, `java`) |
 | `--model MODEL` | Choose which Claude model to use (default: `claude-sonnet-4-6`) |
 | `--json` | Structured JSON output: `error_type`, `root_cause`, `fix_steps`, `gotchas` |
