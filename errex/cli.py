@@ -99,6 +99,8 @@ def main() -> None:
                         help="generate a test case for a code file; pipe an error to reproduce it")
     parser.add_argument("--doctor", action="store_true",
                         help="check that errex is set up correctly (API key, config, connectivity)")
+    parser.add_argument("--offline", action="store_true",
+                        help="skip network checks in --doctor")
     parser.add_argument("--completion", metavar="SHELL", choices=["bash", "zsh"],
                         help="print a shell completion script (bash or zsh)")
     parser.add_argument("--translate", metavar="LANG",
@@ -274,7 +276,7 @@ def main() -> None:
         return
 
     if args.doctor:
-        run_doctor()
+        run_doctor(offline=getattr(args, "offline", False))
         return
 
     if args.completion:
@@ -597,7 +599,7 @@ def main() -> None:
             error_text,
             model=args.model,
             lang=args.lang,
-            context=context_text,
+            context=args.context,  # pass file path so apply_fix can read+patch it
             yes=args.yes,
         )
         return

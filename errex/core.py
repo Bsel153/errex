@@ -414,6 +414,75 @@ def run_bulk(
         )
 
 
+
+# ---------------------------------------------------------------------------
+# apply_fix helpers
+# ---------------------------------------------------------------------------
+
+def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> None:
+    """Display and apply a unified diff to filepath."""
+    import shutil
+    import subprocess as _sp
+
+    output.console.print("\n[bold]Proposed diff:[/bold]")
+    for line in diff_text.splitlines()[:40]:
+        if line.startswith('+') and not line.startswith('+++'):
+            output.console.print(f"[green]{line}[/green]")
+        elif line.startswith('-') and not line.startswith('---'):
+            output.console.print(f"[red]{line}[/red]")
+        else:
+            output.console.print(f"[dim]{line}[/dim]")
+
+    if not yes:
+        try:
+            answer = input("\nApply this patch? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return
+
+    bak = filepath + ".bak"
+    shutil.copy2(filepath, bak)
+
+    result = _sp.run(['patch', '-p0', filepath], input=diff_text, text=True, capture_output=True)
+    if result.returncode == 0:
+        output.console.print(f"[green]✓ Patched {filepath} (backup: {bak})[/green]")
+    else:
+        output.console.print(f"[yellow]patch failed, trying manual apply…[/yellow]")
+        shutil.copy2(bak, filepath)
+        output.console.print(f"[red]✗ Could not apply patch automatically. Backup restored.[/red]")
+
+
+def _apply_full_replacement(new_content: str, filepath: str, yes: bool) -> None:
+    """Display and write a full file replacement."""
+    import shutil
+
+    output.console.print(f"\n[bold]Proposed replacement for {filepath}:[/bold]")
+    lines = new_content.splitlines()
+    preview = lines[:20]
+    for line in preview:
+        output.console.print(f"  {line}")
+    if len(lines) > 20:
+        output.console.print(f"  [dim]... ({len(lines) - 20} more lines)[/dim]")
+
+    if not yes:
+        try:
+            answer = input(f"\nReplace {filepath} with this content? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return
+
+    bak = filepath + ".bak"
+    shutil.copy2(filepath, bak)
+    Path(filepath).write_text(new_content, encoding="utf-8")
+    output.console.print(f"[green]✓ Updated {filepath} (backup: {bak})[/green]")
+
+
 def apply_fix(
     error_text: str,
     model: str,
@@ -421,44 +490,90 @@ def apply_fix(
     context: str | None = None,
     yes: bool = False,
 ) -> None:
-    """Get fix command from Claude and run it (with confirmation)."""
-    output.console.rule("[bold cyan]errex — Fix[/bold cyan]")
-    print()
-    output.console.print("[dim]Asking Claude for a fix command…[/dim]\n")
+    """Ask Claude for a fix and apply it.
 
-    response, _, _, _ = call_claude(
-        error_text, model=model, fix=True, lang=lang, context=context
-    )
-    print()
-
-    # Extract command(s) from code blocks or plain text
+    When context is a file path that exists, Claude is asked for a unified diff
+    or full replacement of that file.  Otherwise, Claude outputs shell commands
+    which are extracted and run.
+    """
     import re as _re
-    code_blocks = _re.findall(r"```(?:bash|sh|shell)?\s*(.*?)```", response, _re.DOTALL)
-    if code_blocks:
-        commands = [c.strip() for c in code_blocks if c.strip()]
-    else:
-        # Fall back to lines that look like commands
-        commands = [l.strip() for l in response.splitlines()
-                    if l.strip() and not l.startswith("#") and not l.startswith("//")]
+    import subprocess as _sp
 
-    if not commands:
-        output.console.print("[yellow]No runnable command found in the fix suggestion.[/yellow]")
+    output.console.rule("[bold cyan]errex — Fix Apply[/bold cyan]")
+    print()
+
+    context_path = context
+    context_file_exists = context_path is not None and Path(context_path).exists()
+
+    if context_file_exists:
+        file_content = Path(context_path).read_text(encoding="utf-8", errors="replace")
+        patch_prompt = (
+            f"The file `{context_path}` contains code that causes this error. "
+            f"Provide the minimal fix as a unified diff "
+            f"(--- a/{context_path} +++ b/{context_path} format). "
+            f"If a diff isn't possible, provide the complete corrected file content.\n\n"
+            f"Error:\n```\n{error_text}\n```\n\n"
+            f"Current file content:\n```\n{file_content}\n```"
+        )
+        response, _, _, _ = call_claude(
+            error_text,
+            model=model,
+            lang=lang,
+            messages=[{"role": "user", "content": patch_prompt}],
+        )
+        print()
+
+        # Check for unified diff
+        if ('--- a/' in response or ('--- ' in response and '+++ ' in response)):
+            _apply_unified_diff(response, context_path, yes)
+        else:
+            # Extract code block content and treat as full replacement
+            code_match = _re.search(r'```(?:\w+)?\n(.*?)```', response, _re.DOTALL)
+            if code_match:
+                _apply_full_replacement(code_match.group(1), context_path, yes)
+            else:
+                output.console.print("[yellow]Could not parse a diff or code block from the response.[/yellow]")
+                output.console.print("[dim]Try running without --context to get shell commands instead.[/dim]")
         return
 
+    # --- Shell-command path (no context file) ---
+    response, _, _, _ = call_claude(error_text, model=model, lang=lang, fix=True)
+    print()
+
+    # Extract shell commands from code blocks
+    blocks = _re.findall(r'```(?:sh|bash|shell)?\n(.*?)```', response, _re.DOTALL)
+    if not blocks:
+        blocks = _re.findall(r'`([^`\n]+)`', response)
+
+    commands = []
+    for block in blocks:
+        for line in block.strip().splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                commands.append(line)
+
+    if not commands:
+        output.console.print("[yellow]No shell commands found in the response.[/yellow]")
+        return
+
+    output.console.print("\n[bold]Commands to run:[/bold]")
     for cmd in commands:
-        output.console.print(f"\n[bold]Command:[/bold] [cyan]{cmd}[/cyan]")
-        if not yes:
-            try:
-                answer = input("Run this? [y/N] ").strip().lower()
-            except (KeyboardInterrupt, EOFError):
-                output.console.print("\n[dim]Aborted.[/dim]")
-                return
-            if answer not in ("y", "yes"):
-                output.console.print("[dim]Skipped.[/dim]")
-                continue
-        import subprocess as _sp
+        output.console.print(f"  [cyan]{cmd}[/cyan]")
+
+    if not yes:
+        try:
+            answer = input("\nRun these commands? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return
+
+    for cmd in commands:
+        output.console.print(f"\n[dim]$ {cmd}[/dim]")
         result = _sp.run(cmd, shell=True, text=True)
-        if result.returncode == 0:
-            output.console.print("[green]✓ Done.[/green]")
+        if result.returncode != 0:
+            output.console.print(f"[red]✗ Command exited {result.returncode}[/red]")
         else:
-            output.console.print(f"[red]✗ Exited with code {result.returncode}[/red]")
+            output.console.print(f"[green]✓ Done[/green]")

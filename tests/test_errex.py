@@ -792,3 +792,103 @@ def test_match_python_unicode():
     title, expl = result
     assert "Unicode" in title
     assert "utf-8" in expl or "codec" in expl.lower()
+
+
+# ---------------------------------------------------------------------------
+# Doctor command
+# ---------------------------------------------------------------------------
+
+def test_doctor_runs(tmp_path):
+    # Just verify it doesn't crash with no config/history
+    import errex.setup_tools as st
+    import errex.cache as ec
+    from errex._paths import HISTORY_FILE as HF, CONFIG_FILE as CF
+    with patch.object(st, "HISTORY_FILE", tmp_path / ".errex_history"), \
+         patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        # Should not raise
+        try:
+            st.run_doctor(offline=True)
+        except SystemExit:
+            pass  # some doctor implementations exit 0
+
+
+def test_doctor_offline_flag_accepted(tmp_path):
+    """run_doctor(offline=True) must accept the offline keyword argument."""
+    import errex.setup_tools as st
+    import errex.cache as ec
+    with patch.object(st, "HISTORY_FILE", tmp_path / ".errex_history"), \
+         patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"), \
+         patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}, clear=True):
+        # Should exit 1 (no API key) but not raise TypeError
+        try:
+            st.run_doctor(offline=True)
+        except SystemExit:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# apply_fix
+# ---------------------------------------------------------------------------
+
+def test_apply_fix_code_file_patch(tmp_path, monkeypatch):
+    """apply_fix with a context file that exists calls Claude with a patch prompt."""
+    code_file = tmp_path / "app.py"
+    code_file.write_text("x = 1/0\n")
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+    mock_stream.__exit__ = MagicMock(return_value=False)
+    mock_stream.text_stream = iter(["--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-x = 1/0\n+x = 1\n"])
+    mock_final = MagicMock()
+    mock_final.usage.input_tokens = 10
+    mock_final.usage.output_tokens = 5
+    mock_stream.get_final_message.return_value = mock_final
+    mock_client = MagicMock()
+    mock_client.messages.stream.return_value = mock_stream
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")  # decline apply
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch("anthropic.Anthropic", return_value=mock_client):
+            ex.apply_fix(
+                "ZeroDivisionError",
+                model="claude-sonnet-4-6",
+                context=str(code_file),
+                yes=False,
+            )
+
+    # The prompt passed to Claude should mention the file and "unified diff"
+    call_kwargs = mock_client.messages.stream.call_args.kwargs
+    prompt = call_kwargs["messages"][0]["content"]
+    assert "unified diff" in prompt
+    assert str(code_file) in prompt
+
+
+def test_apply_fix_no_context_shell_path(tmp_path, monkeypatch):
+    """apply_fix without a context file uses the shell-command path."""
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+    mock_stream.__exit__ = MagicMock(return_value=False)
+    mock_stream.text_stream = iter(["```bash\necho hello\n```"])
+    mock_final = MagicMock()
+    mock_final.usage.input_tokens = 10
+    mock_final.usage.output_tokens = 5
+    mock_stream.get_final_message.return_value = mock_final
+    mock_client = MagicMock()
+    mock_client.messages.stream.return_value = mock_stream
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")  # decline running
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch("anthropic.Anthropic", return_value=mock_client):
+            ex.apply_fix(
+                "SomeError: something broke",
+                model="claude-sonnet-4-6",
+                context=None,
+                yes=False,
+            )
+
+    # In shell-command path, fix=True is set so prompt should mention shell commands
+    call_kwargs = mock_client.messages.stream.call_args.kwargs
+    prompt = call_kwargs["messages"][0]["content"]
+    assert "shell command" in prompt or "fix" in prompt.lower()

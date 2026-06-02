@@ -59,12 +59,19 @@ def clear_cache() -> int:
     return count
 
 def cache_stats() -> dict:
-    """Return basic cache stats."""
+    """Return stats about the response cache: entry count, size in bytes, path."""
     if not CACHE_FILE.exists():
-        return {"entries": 0, "size_kb": 0}
+        return {"entries": 0, "size_bytes": 0, "path": CACHE_FILE}
     try:
+        size = CACHE_FILE.stat().st_size
         data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-        size_kb = CACHE_FILE.stat().st_size // 1024
-        return {"entries": len(data), "size_kb": size_kb}
-    except Exception:
-        return {"entries": 0, "size_kb": 0}
+        if isinstance(data, dict):
+            entries = len(data)
+        elif isinstance(data, list):
+            entries = len(data)
+        else:
+            entries = 0
+    except (json.JSONDecodeError, OSError):
+        entries = 0
+        size = CACHE_FILE.stat().st_size if CACHE_FILE.exists() else 0
+    return {"entries": entries, "size_bytes": size, "path": CACHE_FILE}

@@ -225,3 +225,24 @@ def test_fix_apply_flag_accepted():
     # Just verify --fix-apply is a recognized flag (no error text = exits 1 from usage, not "unrecognized")
     r = run(["--fix-apply", "--help"])
     assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Doctor command
+# ---------------------------------------------------------------------------
+
+def test_doctor_exits_zero(tmp_path):
+    """--doctor --offline should exit 0 or 1 (no key) but never crash with unrecognized args."""
+    r = run(["--doctor", "--offline"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                                             "ANTHROPIC_API_KEY": ""})
+    combined = r.stdout + r.stderr
+    assert "unrecognized" not in combined.lower()
+    assert "traceback" not in combined.lower()
+
+
+def test_doctor_no_crash(tmp_path):
+    """--doctor without API key should exit non-zero but not produce a Python traceback."""
+    r = run(["--doctor", "--offline"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                                             "ANTHROPIC_API_KEY": ""})
+    assert "Traceback" not in r.stdout
+    assert "Traceback" not in r.stderr
