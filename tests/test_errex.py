@@ -109,7 +109,7 @@ def test_explain_error_streams_output(tmp_path, capsys):
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
             with patch.object(ex.history, "HISTORY_FILE", history_file):
-                ex.explain_error("some error", model="claude-sonnet-4-6")
+                ex.explain_error("some error", model="claude-sonnet-4-6", no_cache=True)
 
     assert "This is an error." in capsys.readouterr().out
 
@@ -126,7 +126,7 @@ def test_explain_error_brief_uses_short_prompt(tmp_path):
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
             with patch.object(ex.history, "HISTORY_FILE", history_file):
-                ex.explain_error("some error", model="claude-sonnet-4-6", brief=True)
+                ex.explain_error("some error", model="claude-sonnet-4-6", brief=True, no_cache=True, use_cache=False)
 
     call_kwargs = mock_client.messages.stream.call_args.kwargs
     assert call_kwargs["max_tokens"] == 256
