@@ -1,0 +1,73 @@
+{
+  "name": "errex",
+  "displayName": "errex — AI Error Explainer",
+  "description": "Explain any error message in plain English powered by Claude",
+  "version": "0.1.0",
+  "publisher": "Bsel153",
+  "engines": {"vscode": "^1.85.0"},
+  "categories": ["Other", "Debuggers"],
+  "keywords": ["error", "debugging", "ai", "claude", "explainer"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "errex.explainSelection",
+        "title": "Explain Error with errex",
+        "category": "errex"
+      },
+      {
+        "command": "errex.explainFromClipboard",
+        "title": "Explain Error from Clipboard",
+        "category": "errex"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "errex.explainSelection",
+          "when": "editorHasSelection",
+          "group": "errex"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "errex",
+      "properties": {
+        "errex.anthropicApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key. Leave empty to use the ANTHROPIC_API_KEY environment variable or local pattern matching only.",
+          "markdownDescription": "Anthropic API key for full Claude explanations. Leave empty to use `ANTHROPIC_API_KEY` env var or local pattern matching only."
+        },
+        "errex.webUiUrl": {
+          "type": "string",
+          "default": "http://localhost:7337",
+          "description": "URL of a running errex web UI to use as the backend (optional)."
+        },
+        "errex.useWebUi": {
+          "type": "boolean",
+          "default": false,
+          "description": "Send errors to the errex web UI instead of running the CLI directly."
+        },
+        "errex.cliPath": {
+          "type": "string",
+          "default": "errex",
+          "description": "Path to the errex CLI binary."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

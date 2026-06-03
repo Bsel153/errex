@@ -27,7 +27,7 @@ Repository = "https://github.com/Bsel153/errex"
 "Bug Tracker" = "https://github.com/Bsel153/errex/issues"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pyyaml"]
 scan = [
     "zeroconf>=0.130",
     "paho-mqtt>=2.0",

@@ -1,0 +1,34 @@
+name: Explain CI failures
+
+on:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        id: tests
+        run: |
+          # Your test command here
+          python -m pytest tests/ 2>&1 | tee test-output.txt
+          exit ${PIPESTATUS[0]}
+        continue-on-error: true
+
+      - name: Capture test output
+        if: steps.tests.outcome == 'failure'
+        id: capture
+        run: |
+          echo "output<<EOF" >> "$GITHUB_OUTPUT"
+          cat test-output.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Explain failure
+        if: steps.tests.outcome == 'failure'
+        uses: ./.github/actions/explain
+        with:
+          error-text: ${{ steps.capture.outputs.output }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          language: python

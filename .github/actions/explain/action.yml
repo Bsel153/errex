@@ -1,0 +1,76 @@
+name: "errex — Explain CI failures"
+description: "Explain CI error output in plain English and post as a PR comment"
+inputs:
+  error-text:
+    description: "The error output to explain (from a failed step)"
+    required: true
+  anthropic-api-key:
+    description: "Anthropic API key for full Claude explanations (optional — local patterns work without it)"
+    required: false
+    default: ""
+  language:
+    description: "Language hint (python, rust, go, node, etc.)"
+    required: false
+    default: ""
+  post-comment:
+    description: "Post explanation as a PR comment"
+    required: false
+    default: "true"
+  github-token:
+    description: "GitHub token for posting comments"
+    required: false
+    default: "${{ github.token }}"
+outputs:
+  explanation:
+    description: "The plain-English explanation"
+    value: ${{ steps.explain.outputs.explanation }}
+runs:
+  using: "composite"
+  steps:
+    - name: Install errex
+      shell: bash
+      run: pip install errex --quiet
+    - name: Explain error
+      id: explain
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        ERROR_TEXT: ${{ inputs.error-text }}
+        LANG_HINT: ${{ inputs.language }}
+      run: |
+        # Write error to temp file to avoid shell escaping issues
+        TMPFILE=$(mktemp)
+        printf '%s' "$ERROR_TEXT" > "$TMPFILE"
+
+        # Build args
+        ARGS="--no-history --terse"
+        if [ -n "$LANG_HINT" ]; then
+          ARGS="$ARGS --lang $LANG_HINT"
+        fi
+        if [ -z "$ANTHROPIC_API_KEY" ]; then
+          ARGS="$ARGS --offline"  # Use local patterns only
+        fi
+
+        # Run errex and capture output
+        EXPLANATION=$(errex $ARGS "$TMPFILE" 2>&1 || echo "Could not explain this error.")
+        rm -f "$TMPFILE"
+
+        # Set output (handle multiline)
+        echo "explanation<<EOF" >> "$GITHUB_OUTPUT"
+        echo "$EXPLANATION" >> "$GITHUB_OUTPUT"
+        echo "EOF" >> "$GITHUB_OUTPUT"
+    - name: Post PR comment
+      if: inputs.post-comment == 'true' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EXPLANATION: ${{ steps.explain.outputs.explanation }}
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" \
+          --body "## errex — CI Failure Explanation
+
+        \`\`\`
+        $EXPLANATION
+        \`\`\`
+
+        > _Explained by [errex](https://github.com/Bsel153/errex)_"
