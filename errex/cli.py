@@ -15,7 +15,8 @@ from .history import (save_history, show_history, show_recent, find_similar, cle
                       find_by_name, list_named, export_csv, search_history, dedup_history,
                       show_last, pin_entry)
 from .core import (call_claude, explain_error, compare_errors, chat_loop, ask_about_last,
-                   retry_last, run_bulk)
+                   retry_last, run_bulk, apply_fix)
+from .cache import clear_cache, cache_stats
 from .code_tools import (lint_file, explain_code, generate_test, explain_diff, explain_inline,
                          grep_and_explain, summarize_log)
 from .explainers import (explain_exit_code, explain_http, explain_cron, explain_sql,
@@ -25,6 +26,7 @@ from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detec
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
                     check_for_update, get_env_info)
 from .watch import watch_file
+from .patterns import list_patterns as _list_patterns
 
 
 def main() -> None:
@@ -64,11 +66,19 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", dest="json_output", help="output structured JSON")
     parser.add_argument("--fix", action="store_true", help="output only the fix command, no explanation")
     parser.add_argument("--watch", metavar="LOGFILE", help="watch a log file and explain errors as they appear")
+    parser.add_argument("--host", default="127.0.0.1", metavar="ADDR",
+                        help="host to bind the web UI to (default: 127.0.0.1; use 0.0.0.0 for network access)")
     parser.add_argument("--history", nargs="?", const="", metavar="SEARCH", help="show past explanations, optionally filtered by a search term")
     parser.add_argument("--install-shell", action="store_true", help="add errex-last() function to your shell config")
     parser.add_argument("--stats", action="store_true", help="show usage statistics from your history")
     parser.add_argument("--share", action="store_true", help="upload explanation to paste.rs and print a shareable link")
     parser.add_argument("--web", action="store_true", help="launch the local web UI at http://localhost:7337")
+    parser.add_argument("--port", type=int, default=7337, metavar="PORT",
+                        help="port for the web UI (default: 7337)")
+    parser.add_argument("--tunnel", action="store_true",
+                        help="expose the web UI publicly via a free Cloudflare quick tunnel (no account needed)")
+    parser.add_argument("--auth", default=None, metavar="USER:PASS",
+                        help="enable HTTP Basic auth on the web UI (format: user:password)")
     parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
     parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
@@ -97,6 +107,8 @@ def main() -> None:
                         help="generate a test case for a code file; pipe an error to reproduce it")
     parser.add_argument("--doctor", action="store_true",
                         help="check that errex is set up correctly (API key, config, connectivity)")
+    parser.add_argument("--offline", action="store_true",
+                        help="skip network checks in --doctor")
     parser.add_argument("--completion", metavar="SHELL", choices=["bash", "zsh"],
                         help="print a shell completion script (bash or zsh)")
     parser.add_argument("--translate", metavar="LANG",
@@ -143,6 +155,12 @@ def main() -> None:
                         help="browse recent history with a numbered picker")
     parser.add_argument("--webhook", metavar="URL",
                         help="POST the explanation as JSON to a URL (Slack, Discord, or generic)")
+    parser.add_argument("--digest", action="store_true",
+                        help="print a digest of recent errors from history")
+    parser.add_argument("--digest-since", dest="digest_since", type=int, default=24, metavar="HOURS",
+                        help="digest window in hours (default: 24)")
+    parser.add_argument("--digest-webhook", dest="digest_webhook", default=None, metavar="URL",
+                        help="send digest to a Slack/Discord webhook URL")
     parser.add_argument("--find-name", metavar="NAME", dest="find_name",
                         help="retrieve a history entry saved with --save-as NAME")
     parser.add_argument("--timeout", metavar="N", type=int, default=30,
@@ -191,6 +209,41 @@ def main() -> None:
                         help="scan history and show groups of near-duplicate errors")
     parser.add_argument("--last", action="store_true",
                         help="print the last explanation from history without re-running Claude")
+    parser.add_argument("--no-cache", action="store_true", dest="no_cache",
+                        help="skip the local pattern cache and response cache; always call Claude")
+    parser.add_argument("--no-history", action="store_true", dest="no_history",
+                        help="don't save this explanation to ~/.errex_history")
+    parser.add_argument("--tls", action="store_true",
+                        help="serve the web UI over HTTPS with a self-signed certificate")
+    parser.add_argument("--cert", default=None, metavar="FILE",
+                        help="path to TLS certificate file (PEM format) for --web")
+    parser.add_argument("--key", default=None, metavar="FILE",
+                        help="path to TLS private key file (PEM format) for --web")
+    parser.add_argument("--privacy", action="store_true",
+                        help="print what data errex reads and stores, then exit")
+    parser.add_argument("--show-access", action="store_true", dest="show_access",
+                        help="show all files and env vars errex has access to")
+    parser.add_argument("--list-patterns", action="store_true", dest="list_patterns",
+                        help="show all built-in offline error patterns")
+    parser.add_argument("--clear-cache", action="store_true", dest="clear_cache_flag",
+                        help="clear the response cache (~/.errex_response_cache.json)")
+    parser.add_argument("--fix-apply", action="store_true", dest="fix_apply",
+                        help="get a fix command from Claude and run it (asks for confirmation)")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="auto-confirm fix commands from --fix-apply without prompting")
+    parser.add_argument("--open-ticket", action="store_true", dest="open_ticket",
+                        help="open a Red Hat Customer Portal support case with this error")
+    parser.add_argument("--rht-username", dest="rht_username", default=None, metavar="USER",
+                        help="Red Hat username (or set RHT_USERNAME env var)")
+    parser.add_argument("--rht-password", dest="rht_password", default=None, metavar="PASS",
+                        help="Red Hat password (or set RHT_PASSWORD env var)")
+    parser.add_argument("--rht-severity", dest="rht_severity", type=int, default=None,
+                        choices=[1, 2, 3, 4], metavar="1-4",
+                        help="ticket severity: 1=Urgent 2=High 3=Normal 4=Low (default: 3)")
+    parser.add_argument("--rht-product", dest="rht_product", default=None, metavar="NAME",
+                        help="Red Hat product name for the ticket")
+    parser.add_argument("--rht-version", dest="rht_version", default=None, metavar="VER",
+                        help="product version for the ticket")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -205,8 +258,36 @@ def main() -> None:
     if args.ci:
         args.terse = True
 
+    if args.privacy:
+        from .security import get_privacy_text
+        output.console.print(get_privacy_text())
+        return
+
+    if args.show_access:
+        from .security import get_permissions_summary
+        import json
+        perm = get_permissions_summary()
+        output.console.rule("[bold cyan]errex — Data Access[/bold cyan]")
+        output.console.print("\n[bold]Files:[/bold]")
+        for name, info in perm["files"].items():
+            status = f"{info['size_kb']} KB" if info["exists"] else "not found"
+            output.console.print(f"  {name:<14} {info['path']}  ({status})")
+        output.console.print("\n[bold]Environment variables:[/bold]")
+        for k, v in perm["environment"].items():
+            output.console.print(f"  {k:<22} {v}")
+        output.console.print("\n[bold]Network (only when features are used):[/bold]")
+        for item in perm["network"]:
+            output.console.print(f"  • {item}")
+        output.console.print()
+        return
+
     if args.rate is not None:
         rate_last(args.rate)
+        return
+
+    if args.clear_cache_flag:
+        n = clear_cache()
+        output.console.print(f"[green]Cache cleared ({n} entries).[/green]")
         return
 
     if args.bulk:
@@ -257,7 +338,7 @@ def main() -> None:
         return
 
     if args.doctor:
-        run_doctor()
+        run_doctor(offline=getattr(args, "offline", False))
         return
 
     if args.completion:
@@ -375,6 +456,16 @@ def main() -> None:
         dedup_history()
         return
 
+    if args.list_patterns:
+        from rich.table import Table
+        tbl = Table(title="errex — built-in offline patterns", show_lines=False, box=None)
+        tbl.add_column("#", style="dim", width=4)
+        tbl.add_column("Pattern", style="cyan")
+        for i, title in enumerate(_list_patterns(), 1):
+            tbl.add_row(str(i), title)
+        output.console.print(tbl)
+        return
+
     if args.last:
         show_last()
         return
@@ -414,13 +505,26 @@ def main() -> None:
         )
         return
 
+    if args.digest:
+        from .digest import generate_digest, format_digest_text, send_digest
+        d = generate_digest(since_hours=args.digest_since)
+        output.console.print(format_digest_text(d))
+        if args.digest_webhook:
+            ok = send_digest(args.digest_webhook, d)
+            if ok:
+                output.console.print("[green]✓ Digest sent to webhook[/green]")
+            else:
+                output.console.print("[red]✗ Failed to send digest to webhook[/red]")
+        return
+
     if args.stats:
         show_stats()
         return
 
     if args.web:
         from .web_ui import serve
-        serve()
+        serve(host=args.host, port=args.port, auth=args.auth, tunnel=args.tunnel,
+              tls=args.tls, cert=args.cert, key=args.key)
         return
 
     if args.update:
@@ -565,6 +669,23 @@ def main() -> None:
         first_line = error_text.splitlines()[0][:200] if error_text else "error"
         print(f"::error::{first_line}")
 
+    if args.fix_apply:
+        cfg = load_config()
+        apply_fix(
+            error_text,
+            model=args.model,
+            lang=args.lang,
+            context=args.context,
+            yes=args.yes,
+            open_ticket=args.open_ticket or cfg.get("rht_auto_ticket", False),
+            rht_username=args.rht_username or cfg.get("rht_username"),
+            rht_password=args.rht_password or cfg.get("rht_password"),
+            rht_product=args.rht_product or cfg.get("rht_product", "Red Hat Enterprise Linux"),
+            rht_version=args.rht_version or cfg.get("rht_version", "9.0"),
+            rht_severity=args.rht_severity or cfg.get("rht_severity", 3),
+        )
+        return
+
     explain_error(
         error_text,
         model=args.model,
@@ -587,7 +708,22 @@ def main() -> None:
         dry_run=args.debug,
         top_n=args.top,
         perf=args.perf,
+        no_cache=args.no_cache,
+        use_cache=not args.no_cache,
+        no_history=args.no_history,
     )
+
+    if args.open_ticket:
+        from .ticketing import open_rht_ticket
+        cfg = load_config()
+        open_rht_ticket(
+            error_text,
+            username=args.rht_username or cfg.get("rht_username"),
+            password=args.rht_password or cfg.get("rht_password"),
+            product=args.rht_product or cfg.get("rht_product", "Red Hat Enterprise Linux"),
+            version=args.rht_version or cfg.get("rht_version", "9.0"),
+            severity=args.rht_severity or cfg.get("rht_severity", 3),
+        )
 
     if args.ci:
         sys.exit(1)

@@ -12,6 +12,8 @@ import anthropic
 from . import output, _constants
 from ._paths import HISTORY_FILE
 from .history import save_history
+from .patterns import match_pattern
+from .cache import get_cached, save_cached
 from .utils import (read_file, get_error_input, share_explanation,
                     post_webhook, search_github_issues, notify, extract_snippet,
                     format_json_error, redact_secrets, get_env_info)
@@ -115,11 +117,52 @@ def explain_error(
     dry_run: bool = False,
     top_n: int | None = None,
     perf: bool = False,
+    no_cache: bool = False,
+    use_cache: bool = True,
+    no_history: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
+    # Try the local pattern cache before hitting the API
+    if not no_cache and not json_output and not fix and not dry_run and not terse:
+        hit = match_pattern(error_text)
+        if hit:
+            from rich.markdown import Markdown
+            title, explanation = hit
+            output.console.rule(f"[bold cyan]errex — {title}[/bold cyan]")
+            print()
+            output.console.print(Markdown(explanation))
+            print()
+            output.console.print("[dim]⚡ matched local pattern — use --no-cache to force Claude[/dim]")
+            output.console.rule(style="dim")
+            print()
+            if not no_history:
+                save_history(error_text, explanation, "local", brief, name=save_as)
+            if output_file:
+                Path(output_file).write_text(explanation, encoding="utf-8")
+            if copy:
+                output.copy_to_clipboard(explanation)
+            return
+
     if not json_output and not dry_run:
         output.console.rule("[bold cyan]errex — Error Analysis[/bold cyan]")
         print()
+
+    if use_cache and not json_output and not fix and not dry_run:
+        cached = get_cached(error_text, model, brief, terse)
+        if cached:
+            from rich.markdown import Markdown
+            output.console.print(Markdown(cached))
+            print()
+            output.console.print("[dim]📦 cached response — use --no-cache to call Claude[/dim]")
+            output.console.rule(style="dim")
+            print()
+            if not no_history:
+                save_history(error_text, cached, model, brief, name=save_as)
+            if output_file:
+                Path(output_file).write_text(cached, encoding="utf-8")
+            if copy:
+                output.copy_to_clipboard(cached)
+            return
 
     response, in_tok, out_tok, elapsed = call_claude(
         error_text, model=model, brief=brief, terse=terse, json_output=json_output,
@@ -129,6 +172,9 @@ def explain_error(
 
     if dry_run:
         return
+
+    if use_cache and response and not json_output and not fix:
+        save_cached(error_text, model, brief, terse, response)
 
     if json_output:
         try:
@@ -145,7 +191,8 @@ def explain_error(
         output.console.rule(style="dim")
         print()
 
-    save_history(error_text, response, model, brief, name=save_as)
+    if not no_history:
+        save_history(error_text, response, model, brief, name=save_as)
 
     if output_file:
         out = Path(output_file)
@@ -369,3 +416,210 @@ def run_bulk(
             copy=copy,
             show_tokens=show_tokens,
         )
+
+
+
+# ---------------------------------------------------------------------------
+# apply_fix helpers
+# ---------------------------------------------------------------------------
+
+def _apply_unified_diff(diff_text: str, filepath: str, yes: bool) -> bool:
+    """Display and apply a unified diff to filepath. Returns True on success."""
+    import shutil
+    import subprocess as _sp
+
+    output.console.print("\n[bold]Proposed diff:[/bold]")
+    for line in diff_text.splitlines()[:40]:
+        if line.startswith('+') and not line.startswith('+++'):
+            output.console.print(f"[green]{line}[/green]")
+        elif line.startswith('-') and not line.startswith('---'):
+            output.console.print(f"[red]{line}[/red]")
+        else:
+            output.console.print(f"[dim]{line}[/dim]")
+
+    if not yes:
+        try:
+            answer = input("\nApply this patch? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return False
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return False
+
+    bak = filepath + ".bak"
+    shutil.copy2(filepath, bak)
+
+    result = _sp.run(['patch', '-p0', filepath], input=diff_text, text=True, capture_output=True)
+    if result.returncode == 0:
+        output.console.print(f"[green]✓ Patched {filepath} (backup: {bak})[/green]")
+        return True
+    else:
+        output.console.print(f"[yellow]patch failed, trying manual apply…[/yellow]")
+        shutil.copy2(bak, filepath)
+        output.console.print(f"[red]✗ Could not apply patch automatically. Backup restored.[/red]")
+        return False
+
+
+def _apply_full_replacement(new_content: str, filepath: str, yes: bool) -> bool:
+    """Display and write a full file replacement. Returns True on success."""
+    import shutil
+
+    output.console.print(f"\n[bold]Proposed replacement for {filepath}:[/bold]")
+    lines = new_content.splitlines()
+    preview = lines[:20]
+    for line in preview:
+        output.console.print(f"  {line}")
+    if len(lines) > 20:
+        output.console.print(f"  [dim]... ({len(lines) - 20} more lines)[/dim]")
+
+    if not yes:
+        try:
+            answer = input(f"\nReplace {filepath} with this content? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return False
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return False
+
+    bak = filepath + ".bak"
+    shutil.copy2(filepath, bak)
+    Path(filepath).write_text(new_content, encoding="utf-8")
+    output.console.print(f"[green]✓ Updated {filepath} (backup: {bak})[/green]")
+    return True
+
+
+def _maybe_open_ticket(
+    error_text: str,
+    explanation: str,
+    username: str | None,
+    password: str | None,
+    product: str,
+    version: str,
+    severity: int,
+) -> None:
+    from .ticketing import open_rht_ticket
+    output.console.print("\n[yellow]Fix did not succeed — opening Red Hat support case…[/yellow]")
+    open_rht_ticket(
+        error_text,
+        explanation,
+        username=username,
+        password=password,
+        product=product,
+        version=version,
+        severity=severity,
+    )
+
+
+def apply_fix(
+    error_text: str,
+    model: str,
+    lang: str | None = None,
+    context: str | None = None,
+    yes: bool = False,
+    open_ticket: bool = False,
+    rht_username: str | None = None,
+    rht_password: str | None = None,
+    rht_product: str = "Red Hat Enterprise Linux",
+    rht_version: str = "9.0",
+    rht_severity: int = 3,
+) -> None:
+    """Ask Claude for a fix and apply it.
+
+    When context is a file path that exists, Claude is asked for a unified diff
+    or full replacement of that file.  Otherwise, Claude outputs shell commands
+    which are extracted and run.
+    """
+    import re as _re
+    import subprocess as _sp
+
+    output.console.rule("[bold cyan]errex — Fix Apply[/bold cyan]")
+    print()
+
+    context_path = context
+    context_file_exists = context_path is not None and Path(context_path).exists()
+
+    if context_file_exists:
+        file_content = Path(context_path).read_text(encoding="utf-8", errors="replace")
+        patch_prompt = (
+            f"The file `{context_path}` contains code that causes this error. "
+            f"Provide the minimal fix as a unified diff "
+            f"(--- a/{context_path} +++ b/{context_path} format). "
+            f"If a diff isn't possible, provide the complete corrected file content.\n\n"
+            f"Error:\n```\n{error_text}\n```\n\n"
+            f"Current file content:\n```\n{file_content}\n```"
+        )
+        response, _, _, _ = call_claude(
+            error_text,
+            model=model,
+            lang=lang,
+            messages=[{"role": "user", "content": patch_prompt}],
+        )
+        print()
+
+        # Check for unified diff
+        fix_applied = False
+        if ('--- a/' in response or ('--- ' in response and '+++ ' in response)):
+            fix_applied = _apply_unified_diff(response, context_path, yes)
+        else:
+            # Extract code block content and treat as full replacement
+            code_match = _re.search(r'```(?:\w+)?\n(.*?)```', response, _re.DOTALL)
+            if code_match:
+                fix_applied = _apply_full_replacement(code_match.group(1), context_path, yes)
+            else:
+                output.console.print("[yellow]Could not parse a diff or code block from the response.[/yellow]")
+                output.console.print("[dim]Try running without --context to get shell commands instead.[/dim]")
+
+        if not fix_applied and open_ticket:
+            _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)
+        return
+
+    # --- Shell-command path (no context file) ---
+    response, _, _, _ = call_claude(error_text, model=model, lang=lang, fix=True)
+    print()
+
+    # Extract shell commands from code blocks
+    blocks = _re.findall(r'```(?:sh|bash|shell)?\n(.*?)```', response, _re.DOTALL)
+    if not blocks:
+        blocks = _re.findall(r'`([^`\n]+)`', response)
+
+    commands = []
+    for block in blocks:
+        for line in block.strip().splitlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                commands.append(line)
+
+    if not commands:
+        output.console.print("[yellow]No shell commands found in the response.[/yellow]")
+        if open_ticket:
+            _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)
+        return
+
+    output.console.print("\n[bold]Commands to run:[/bold]")
+    for cmd in commands:
+        output.console.print(f"  [cyan]{cmd}[/cyan]")
+
+    if not yes:
+        try:
+            answer = input("\nRun these commands? [y/N] ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            output.console.print("\n[dim]Aborted.[/dim]")
+            return
+        if answer not in ("y", "yes"):
+            output.console.print("[dim]Skipped.[/dim]")
+            return
+
+    any_failed = False
+    for cmd in commands:
+        output.console.print(f"\n[dim]$ {cmd}[/dim]")
+        result = _sp.run(cmd, shell=True, text=True)
+        if result.returncode != 0:
+            output.console.print(f"[red]✗ Command exited {result.returncode}[/red]")
+            any_failed = True
+        else:
+            output.console.print(f"[green]✓ Done[/green]")
+
+    if any_failed and open_ticket:
+        _maybe_open_ticket(error_text, response, rht_username, rht_password, rht_product, rht_version, rht_severity)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Import submodules so ex.history, ex.config etc. are accessible (needed for test patches)
-from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output
+from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing, digest, security
 
 # Re-export paths for backward compat
 from ._paths import HISTORY_FILE, CONFIG_FILE
@@ -12,7 +12,8 @@ from .history import (save_history, show_history, show_recent, find_similar, cle
                       export_history, show_stats, interactive_history, rate_last, add_note,
                       find_by_name, list_named, export_csv, search_history, dedup_history,
                       show_last, pin_entry)
-from .core import (call_claude, explain_error, compare_errors, chat_loop, ask_about_last, retry_last, run_bulk)
+from .core import (call_claude, explain_error, compare_errors, chat_loop, ask_about_last, retry_last, run_bulk, apply_fix)
+from .cache import get_cached, save_cached, clear_cache, cache_stats
 from .code_tools import (lint_file, explain_code, generate_test, explain_diff, explain_inline,
                          grep_and_explain, summarize_log)
 from .explainers import (explain_exit_code, explain_http, explain_cron, explain_sql,
@@ -25,7 +26,10 @@ from .utils import (read_file, get_error_input, extract_error_type, _parse_since
                     share_explanation, post_webhook, _detect_yaml_type, _error_fingerprint,
                     search_github_issues)
 from .output import show_token_usage, show_perf, copy_to_clipboard
+from .digest import generate_digest, format_digest_text, format_digest_slack, send_digest
 from .watch import watch_file
 from ._constants import (SYSTEM_PROMPT, API_TIMEOUT, CONFIG_DEFAULTS, CONFIG_TYPES, EXIT_CODES,
                           HTTP_CODES, ENV_VARS, ERROR_PATTERNS)
+from .patterns import match_pattern, list_patterns
+from .ticketing import open_rht_ticket
 from .cli import main

@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  errex:
+    build: .
+    # Alternatively, use the published image:
+    # image: ghcr.io/bsel153/errex:latest
+    restart: unless-stopped
+    ports:
+      - "7337:7337"
+    environment:
+      # Required — your Anthropic API key
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # Optional — Red Hat ticketing
+      RHT_USERNAME: ${RHT_USERNAME:-}
+      RHT_PASSWORD: ${RHT_PASSWORD:-}
+    volumes:
+      # Persistent storage for history, cache, config, and TLS certs
+      - errex-data:/data
+    # Optional: add --auth user:pass --tls for HTTPS with Basic auth
+    # command: ["--auth", "admin:changeme", "--tls"]
+
+volumes:
+  errex-data:
+    driver: local

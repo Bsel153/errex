@@ -195,3 +195,109 @@ def test_no_api_key_prints_helpful_message():
     r = run([], input="SomeError: something went wrong\n", env={"ANTHROPIC_API_KEY": ""})
     output = r.stdout + r.stderr
     assert "ANTHROPIC_API_KEY" in output
+
+
+# ---------------------------------------------------------------------------
+# Pattern cache and --no-cache flag
+# ---------------------------------------------------------------------------
+
+def test_list_patterns_exits_zero():
+    r = run(["--list-patterns"])
+    assert r.returncode == 0
+
+def test_list_patterns_shows_python():
+    r = run(["--list-patterns"])
+    assert "Python" in r.stdout
+
+def test_no_cache_flag_accepted():
+    r = run(["--no-cache", "--list-patterns"])
+    assert "unrecognized" not in r.stderr.lower()
+    assert r.returncode == 0
+
+
+def test_clear_cache_exits_zero():
+    r = run(["--clear-cache"])
+    assert r.returncode == 0
+    assert "cache" in r.stdout.lower() or "Cache" in r.stdout
+
+
+def test_fix_apply_flag_accepted():
+    # Just verify --fix-apply is a recognized flag (no error text = exits 1 from usage, not "unrecognized")
+    r = run(["--fix-apply", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Doctor command
+# ---------------------------------------------------------------------------
+
+def test_doctor_exits_zero(tmp_path):
+    """--doctor --offline should exit 0 or 1 (no key) but never crash with unrecognized args."""
+    r = run(["--doctor", "--offline"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                                             "ANTHROPIC_API_KEY": ""})
+    combined = r.stdout + r.stderr
+    assert "unrecognized" not in combined.lower()
+    assert "traceback" not in combined.lower()
+
+
+def test_doctor_no_crash(tmp_path):
+    """--doctor without API key should exit non-zero but not produce a Python traceback."""
+    r = run(["--doctor", "--offline"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                                             "ANTHROPIC_API_KEY": ""})
+    assert "Traceback" not in r.stdout
+    assert "Traceback" not in r.stderr
+
+
+# ---------------------------------------------------------------------------
+# RHT ticketing flags
+# ---------------------------------------------------------------------------
+
+def test_open_ticket_flag_accepted():
+    r = run(["--open-ticket", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_rht_username_flag_accepted():
+    r = run(["--rht-username", "user@redhat.com", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_rht_severity_flag_accepted():
+    r = run(["--rht-severity", "2", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_open_ticket_no_creds_prints_helpful_message():
+    """--open-ticket without credentials should print a message, not crash."""
+    r = run(
+        ["--open-ticket"],
+        input="SomeError: something went wrong\n",
+        env={"ANTHROPIC_API_KEY": "", "RHT_USERNAME": "", "RHT_PASSWORD": ""},
+    )
+    combined = r.stdout + r.stderr
+    assert "Traceback" not in combined
+    # Should mention missing API key or missing RHT credentials
+    assert "ANTHROPIC_API_KEY" in combined or "RHT_USERNAME" in combined or "RHT_PASSWORD" in combined
+
+def test_web_auth_flag_accepted():
+    r = run(["--auth", "user:pass", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# Digest
+# ---------------------------------------------------------------------------
+
+def test_digest_exits_zero(tmp_path):
+    r = run(["--digest"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+
+
+def test_digest_no_history_message(tmp_path):
+    r = run(["--digest"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert "0" in r.stdout or "No " in r.stdout
+
+
+def test_digest_since_flag_accepted(tmp_path):
+    r = run(["--digest", "--digest-since", "48"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0

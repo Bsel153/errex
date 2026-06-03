@@ -93,7 +93,7 @@ def test_explain_error_exits_without_api_key():
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
     with patch.dict(os.environ, env, clear=True):
         with pytest.raises(SystemExit) as exc:
-            ex.explain_error("some error", model="claude-sonnet-4-6")
+            ex.explain_error("some error", model="claude-sonnet-4-6", no_cache=True, use_cache=False)
     assert exc.value.code == 1
 
 
@@ -109,7 +109,7 @@ def test_explain_error_streams_output(tmp_path, capsys):
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
             with patch.object(ex.history, "HISTORY_FILE", history_file):
-                ex.explain_error("some error", model="claude-sonnet-4-6")
+                ex.explain_error("some error", model="claude-sonnet-4-6", no_cache=True)
 
     assert "This is an error." in capsys.readouterr().out
 
@@ -126,7 +126,7 @@ def test_explain_error_brief_uses_short_prompt(tmp_path):
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
         with patch("anthropic.Anthropic", return_value=mock_client):
             with patch.object(ex.history, "HISTORY_FILE", history_file):
-                ex.explain_error("some error", model="claude-sonnet-4-6", brief=True)
+                ex.explain_error("some error", model="claude-sonnet-4-6", brief=True, no_cache=True, use_cache=False)
 
     call_kwargs = mock_client.messages.stream.call_args.kwargs
     assert call_kwargs["max_tokens"] == 256
@@ -647,3 +647,625 @@ def test_delete_profile_missing_exits(tmp_path):
     with patch.object(ex.config, "CONFIG_FILE", config_file):
         with pytest.raises(SystemExit):
             ex.delete_profile("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Pattern cache
+# ---------------------------------------------------------------------------
+
+def test_match_python_module_not_found():
+    title, expl = ex.match_pattern("ModuleNotFoundError: No module named 'requests'")
+    assert "ModuleNotFoundError" in title
+    assert "requests" in expl
+
+
+def test_match_none_type_attribute_error():
+    result = ex.match_pattern("AttributeError: 'NoneType' object has no attribute 'split'")
+    assert result is not None
+    title, expl = result
+    assert "NoneType" in title
+    assert "None" in expl
+
+
+def test_no_match_unknown_error():
+    assert ex.match_pattern("xyzzy: completely unknown error abc123") is None
+
+
+def test_list_patterns_returns_strings():
+    titles = ex.list_patterns()
+    assert isinstance(titles, list)
+    assert len(titles) > 20
+    assert all(isinstance(t, str) and t for t in titles)
+
+
+def test_match_node_cannot_find_module():
+    result = ex.match_pattern("Error: Cannot find module 'express'")
+    assert result is not None
+    assert "express" in result[1]
+
+
+def test_match_git_not_a_repo():
+    result = ex.match_pattern("fatal: not a git repository (or any of the parent directories): .git")
+    assert result is not None
+    assert "Git" in result[0]
+
+
+def test_match_returns_markdown():
+    _, expl = ex.match_pattern("ZeroDivisionError: division by zero")
+    assert "**" in expl  # markdown bold markers present
+
+
+def test_match_key_error():
+    result = ex.match_pattern("KeyError: 'username'")
+    assert result is not None
+    assert "KeyError" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# Response cache
+# ---------------------------------------------------------------------------
+
+def test_cache_miss_returns_none(tmp_path):
+    from errex.cache import get_cached
+    # Should return None when no cache file exists
+    # We can't easily override CACHE_FILE without patching, so just verify
+    # that a fresh get_cached returns None for a nonsense key
+    # (real cache file may exist on the test machine, so patch it)
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        assert get_cached("no such error", "claude-sonnet-4-6", False, False) is None
+
+def test_cache_roundtrip(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "test response")
+        result = ec.get_cached("test error", "claude-sonnet-4-6", False, False)
+        assert result == "test response"
+
+def test_cache_different_model_misses(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "sonnet response")
+        result = ec.get_cached("test error", "claude-opus-4-8", False, False)
+        assert result is None
+
+def test_clear_cache(tmp_path):
+    import errex.cache as ec
+    with patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        ec.save_cached("test error", "claude-sonnet-4-6", False, False, "response")
+        n = ec.clear_cache()
+        assert n == 1
+        assert not (tmp_path / "cache.json").exists()
+
+
+def test_match_rust_panic():
+    result = ex.match_pattern(
+        "thread 'main' panicked at 'index out of bounds: the len is 3 but the index is 5', src/main.rs:10:5"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Rust" in title
+    assert "panic" in title.lower() or "Panic" in title
+
+
+def test_match_java_npe():
+    result = ex.match_pattern('Exception in thread "main" java.lang.NullPointerException')
+    assert result is not None
+    title, expl = result
+    assert "Java" in title
+    assert "Null" in title or "null" in expl.lower()
+
+
+def test_match_go_nil_pointer():
+    result = ex.match_pattern(
+        "panic: runtime error: invalid memory address or nil pointer dereference"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Go" in title
+    assert "nil" in expl.lower() or "Nil" in title
+
+
+def test_match_docker_copy_failed():
+    result = ex.match_pattern(
+        "COPY failed: file not found in build context or excluded by .dockerignore: stat myfile.txt: file does not exist"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Docker" in title
+    assert "COPY" in title or "copy" in expl.lower()
+
+
+def test_match_pip_resolution():
+    result = ex.match_pattern("ERROR: ResolutionImpossible for pip-backtracking")
+    assert result is not None
+    title, expl = result
+    assert "pip" in title
+    assert "Resolution" in title or "resolution" in expl.lower()
+
+
+def test_match_python_unicode():
+    result = ex.match_pattern(
+        "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0"
+    )
+    assert result is not None
+    title, expl = result
+    assert "Unicode" in title
+    assert "utf-8" in expl or "codec" in expl.lower()
+
+
+# ---------------------------------------------------------------------------
+# Doctor command
+# ---------------------------------------------------------------------------
+
+def test_doctor_runs(tmp_path):
+    # Just verify it doesn't crash with no config/history
+    import errex.setup_tools as st
+    import errex.cache as ec
+    from errex._paths import HISTORY_FILE as HF, CONFIG_FILE as CF
+    with patch.object(st, "HISTORY_FILE", tmp_path / ".errex_history"), \
+         patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"):
+        # Should not raise
+        try:
+            st.run_doctor(offline=True)
+        except SystemExit:
+            pass  # some doctor implementations exit 0
+
+
+def test_doctor_offline_flag_accepted(tmp_path):
+    """run_doctor(offline=True) must accept the offline keyword argument."""
+    import errex.setup_tools as st
+    import errex.cache as ec
+    with patch.object(st, "HISTORY_FILE", tmp_path / ".errex_history"), \
+         patch.object(ec, "CACHE_FILE", tmp_path / "cache.json"), \
+         patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}, clear=True):
+        # Should exit 1 (no API key) but not raise TypeError
+        try:
+            st.run_doctor(offline=True)
+        except SystemExit:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# apply_fix
+# ---------------------------------------------------------------------------
+
+def test_apply_fix_code_file_patch(tmp_path, monkeypatch):
+    """apply_fix with a context file that exists calls Claude with a patch prompt."""
+    code_file = tmp_path / "app.py"
+    code_file.write_text("x = 1/0\n")
+
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+    mock_stream.__exit__ = MagicMock(return_value=False)
+    mock_stream.text_stream = iter(["--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-x = 1/0\n+x = 1\n"])
+    mock_final = MagicMock()
+    mock_final.usage.input_tokens = 10
+    mock_final.usage.output_tokens = 5
+    mock_stream.get_final_message.return_value = mock_final
+    mock_client = MagicMock()
+    mock_client.messages.stream.return_value = mock_stream
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")  # decline apply
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch("anthropic.Anthropic", return_value=mock_client):
+            ex.apply_fix(
+                "ZeroDivisionError",
+                model="claude-sonnet-4-6",
+                context=str(code_file),
+                yes=False,
+            )
+
+    # The prompt passed to Claude should mention the file and "unified diff"
+    call_kwargs = mock_client.messages.stream.call_args.kwargs
+    prompt = call_kwargs["messages"][0]["content"]
+    assert "unified diff" in prompt
+    assert str(code_file) in prompt
+
+
+def test_apply_fix_no_context_shell_path(tmp_path, monkeypatch):
+    """apply_fix without a context file uses the shell-command path."""
+    mock_stream = MagicMock()
+    mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+    mock_stream.__exit__ = MagicMock(return_value=False)
+    mock_stream.text_stream = iter(["```bash\necho hello\n```"])
+    mock_final = MagicMock()
+    mock_final.usage.input_tokens = 10
+    mock_final.usage.output_tokens = 5
+    mock_stream.get_final_message.return_value = mock_final
+    mock_client = MagicMock()
+    mock_client.messages.stream.return_value = mock_stream
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")  # decline running
+
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch("anthropic.Anthropic", return_value=mock_client):
+            ex.apply_fix(
+                "SomeError: something broke",
+                model="claude-sonnet-4-6",
+                context=None,
+                yes=False,
+            )
+
+    # In shell-command path, fix=True is set so prompt should mention shell commands
+    call_kwargs = mock_client.messages.stream.call_args.kwargs
+    prompt = call_kwargs["messages"][0]["content"]
+    assert "shell command" in prompt or "fix" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# RHT ticketing
+# ---------------------------------------------------------------------------
+
+class TestRHTTicketing:
+    def _mock_urlopen(self, case_number="01234567"):
+        """Return a context-manager mock that simulates a successful RHT API response."""
+        import urllib.request
+        response_data = json.dumps({
+            "caseNumber": case_number,
+            "caseUri": f"https://access.redhat.com/support/cases/#/case/{case_number}",
+        }).encode()
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = response_data
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        return MagicMock(return_value=mock_resp)
+
+    def test_open_ticket_success(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen("01234567")
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        result = ex.open_rht_ticket(
+            "SomeError: kaboom",
+            username="user@redhat.com",
+            password="secret",
+        )
+        assert result is not None
+        case_number, case_url = result
+        assert case_number == "01234567"
+        assert "01234567" in case_url
+
+    def test_open_ticket_posts_to_correct_url(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="u", password="p")
+        req = mock_urlopen.call_args[0][0]
+        assert req.full_url == "https://api.access.redhat.com/rs/cases"
+        assert req.method == "POST"
+
+    def test_open_ticket_sends_auth_header(self, monkeypatch):
+        import base64
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="myuser", password="mypass")
+        req = mock_urlopen.call_args[0][0]
+        expected = "Basic " + base64.b64encode(b"myuser:mypass").decode()
+        assert req.get_header("Authorization") == expected
+
+    def test_open_ticket_includes_error_text(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("SpecialError: unique_string_xyz", username="u", password="p")
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data)
+        assert "unique_string_xyz" in body["description"]
+
+    def test_open_ticket_uses_severity(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        ex.open_rht_ticket("err", username="u", password="p", severity=1)
+        req = mock_urlopen.call_args[0][0]
+        body = json.loads(req.data)
+        assert "Urgent" in body["severity"]["name"]
+
+    def test_open_ticket_reads_env_vars(self, monkeypatch):
+        mock_urlopen = self._mock_urlopen()
+        monkeypatch.setattr("urllib.request.urlopen", mock_urlopen)
+        monkeypatch.setenv("RHT_USERNAME", "envuser")
+        monkeypatch.setenv("RHT_PASSWORD", "envpass")
+        result = ex.open_rht_ticket("err")
+        assert result is not None
+
+    def test_open_ticket_missing_creds_returns_none(self, monkeypatch):
+        monkeypatch.delenv("RHT_USERNAME", raising=False)
+        monkeypatch.delenv("RHT_PASSWORD", raising=False)
+        result = ex.open_rht_ticket("err", username="", password="")
+        assert result is None
+
+    def test_open_ticket_http_error_returns_none(self, monkeypatch):
+        import urllib.error
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            MagicMock(side_effect=urllib.error.HTTPError(
+                url="", code=401, msg="Unauthorized", hdrs={}, fp=None
+            )),
+        )
+        result = ex.open_rht_ticket("err", username="u", password="wrong")
+        assert result is None
+
+    def test_open_ticket_network_error_returns_none(self, monkeypatch):
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            MagicMock(side_effect=OSError("connection refused")),
+        )
+        result = ex.open_rht_ticket("err", username="u", password="p")
+        assert result is None
+
+    def test_apply_fix_triggers_ticket_on_no_commands(self, monkeypatch):
+        """When fix produces no commands and open_ticket=True, ticket should be opened."""
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.text_stream = iter(["No commands here, just prose."])
+        mock_final = MagicMock()
+        mock_final.usage.input_tokens = 5
+        mock_final.usage.output_tokens = 5
+        mock_stream.get_final_message.return_value = mock_final
+        mock_client = MagicMock()
+        mock_client.messages.stream.return_value = mock_stream
+
+        ticket_calls = []
+
+        def fake_open_ticket(error_text, explanation="", *, username=None, password=None, **kw):
+            ticket_calls.append(error_text)
+            return None
+
+        monkeypatch.setattr("errex.ticketing.open_rht_ticket", fake_open_ticket)
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                ex.apply_fix(
+                    "SomeError: unfixable",
+                    model="claude-sonnet-4-6",
+                    open_ticket=True,
+                    rht_username="u",
+                    rht_password="p",
+                )
+
+        assert len(ticket_calls) == 1
+        assert "SomeError" in ticket_calls[0]
+
+# ---------------------------------------------------------------------------
+# TestWebAuth
+# ---------------------------------------------------------------------------
+
+class TestWebAuth:
+    def test_compute_stats_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", tmp_path / "h.jsonl")
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 0
+
+    def test_compute_stats_counts(self, tmp_path, monkeypatch):
+        import json
+        h = tmp_path / "h.jsonl"
+        h.write_text(json.dumps({"error": "ModuleNotFoundError: foo", "timestamp": "2026-06-01T12:00:00"}) + "\n")
+        monkeypatch.setattr("errex.web_ui._HISTORY_FILE", h)
+        from errex.web_ui import _compute_stats
+        d = _compute_stats()
+        assert d["total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# TestRemoteAccess (tunnel / local IP helpers)
+# ---------------------------------------------------------------------------
+
+class TestRemoteAccess:
+    def test_local_ip_returns_string(self):
+        from errex.web_ui import _local_ip
+        ip = _local_ip()
+        assert isinstance(ip, str)
+        assert "." in ip  # looks like an IP address
+
+    def test_start_tunnel_returns_none_when_not_installed(self, monkeypatch):
+        from errex.web_ui import _start_tunnel
+        monkeypatch.setattr(
+            "subprocess.Popen",
+            MagicMock(side_effect=FileNotFoundError("cloudflared not found")),
+        )
+        result = _start_tunnel(7337)
+        assert result is None
+
+    def test_start_tunnel_parses_url(self, monkeypatch):
+        from errex.web_ui import _start_tunnel
+        lines = [
+            "Starting tunnel...\n",
+            "2026-06-02T00:00:00Z INF | https://test-abc.trycloudflare.com |\n",
+        ]
+        mock_proc = MagicMock()
+        mock_proc.stdout = iter(lines)
+        monkeypatch.setattr("subprocess.Popen", MagicMock(return_value=mock_proc))
+        url = _start_tunnel(7337)
+        assert url == "https://test-abc.trycloudflare.com"
+
+    def test_tunnel_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--tunnel", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestDigest
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timezone, timedelta
+
+
+def _write_history_digest(path, entries):
+    with open(path, "w") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+
+
+def _ts(hours_ago=0):
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+
+
+class TestDigest:
+    def test_generate_digest_empty_history(self, tmp_path, monkeypatch):
+        missing = tmp_path / "no_history.jsonl"
+        monkeypatch.setattr("errex.history.HISTORY_FILE", missing)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", missing)
+        result = ex.generate_digest()
+        assert result["total"] == 0
+
+    def test_generate_digest_counts_entries(self, tmp_path, monkeypatch):
+        hf = tmp_path / "history.jsonl"
+        entries = [
+            {"timestamp": _ts(1), "error": "TypeError: x", "model": "m", "brief": False},
+            {"timestamp": _ts(2), "error": "ValueError: y", "model": "m", "brief": False},
+            {"timestamp": _ts(3), "error": "KeyError: z", "model": "m", "brief": False},
+        ]
+        _write_history_digest(hf, entries)
+        monkeypatch.setattr("errex.history.HISTORY_FILE", hf)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", hf)
+        result = ex.generate_digest(since_hours=24)
+        assert result["total"] == 3
+
+    def test_generate_digest_filters_old_entries(self, tmp_path, monkeypatch):
+        hf = tmp_path / "history.jsonl"
+        entries = [
+            {"timestamp": _ts(48), "error": "OldError: gone", "model": "m", "brief": False},
+            {"timestamp": _ts(1), "error": "TypeError: recent", "model": "m", "brief": False},
+        ]
+        _write_history_digest(hf, entries)
+        monkeypatch.setattr("errex.history.HISTORY_FILE", hf)
+        monkeypatch.setattr("errex.digest.HISTORY_FILE", hf)
+        result = ex.generate_digest(since_hours=24)
+        assert result["total"] == 1
+
+    def test_format_digest_text_zero(self):
+        digest = {
+            "window_hours": 24, "total": 0, "error_types": {}, "models": {},
+            "avg_rating": None, "rated_count": 0, "recent": [],
+        }
+        result = ex.format_digest_text(digest)
+        assert "0" in result
+
+    def test_format_digest_text_nonzero(self):
+        digest = {
+            "window_hours": 24, "total": 5,
+            "error_types": {"TypeError": 3, "ValueError": 2},
+            "models": {"claude-sonnet-4-6": 5},
+            "avg_rating": 4.0, "rated_count": 2, "recent": [],
+        }
+        result = ex.format_digest_text(digest)
+        assert "5" in result
+
+    def test_format_digest_slack_structure(self):
+        digest = {
+            "window_hours": 24, "total": 3,
+            "error_types": {"TypeError": 2, "KeyError": 1},
+            "models": {"m": 3}, "avg_rating": None, "rated_count": 0, "recent": [],
+        }
+        result = ex.format_digest_slack(digest)
+        assert isinstance(result, dict)
+        assert "blocks" in result
+
+    def test_send_digest_success(self, monkeypatch):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: mock_resp)
+        result = ex.send_digest("http://example.com", {})
+        assert result is True
+
+    def test_send_digest_failure(self, monkeypatch):
+        monkeypatch.setattr("urllib.request.urlopen", MagicMock(side_effect=OSError("network error")))
+        result = ex.send_digest("http://example.com", {})
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Security / privacy / permissions
+# ---------------------------------------------------------------------------
+
+class TestSecurity:
+    def test_privacy_text_mentions_anthropic(self):
+        from errex.security import get_privacy_text
+        text = get_privacy_text()
+        assert "Anthropic" in text
+        assert "history" in text.lower()
+
+    def test_privacy_text_mentions_opt_out(self):
+        from errex.security import get_privacy_text
+        assert "--no-history" in get_privacy_text()
+
+    def test_permissions_summary_structure(self):
+        from errex.security import get_permissions_summary
+        p = get_permissions_summary()
+        assert "files" in p
+        assert "environment" in p
+        assert "network" in p
+        assert "history" in p["files"]
+        assert "cache" in p["files"]
+
+    def test_permissions_summary_env_keys(self):
+        from errex.security import get_permissions_summary
+        p = get_permissions_summary()
+        assert "ANTHROPIC_API_KEY" in p["environment"]
+
+    def test_privacy_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--privacy"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "Anthropic" in r.stdout
+
+    def test_show_access_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--show-access"],
+            capture_output=True, text=True,
+        )
+        assert r.returncode == 0
+        assert "history" in r.stdout.lower()
+
+    def test_no_history_flag_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--no-history", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+    def test_tls_flags_accepted(self):
+        import subprocess, sys
+        r = subprocess.run(
+            [sys.executable, "-m", "errex", "--tls", "--help"],
+            capture_output=True, text=True,
+        )
+        assert "unrecognized" not in r.stderr.lower()
+
+    def test_no_history_prevents_save(self, tmp_path, monkeypatch):
+        """--no-history should not write to the history file."""
+        history_file = tmp_path / "history"
+        mock_stream = MagicMock()
+        mock_stream.__enter__ = MagicMock(return_value=mock_stream)
+        mock_stream.__exit__ = MagicMock(return_value=False)
+        mock_stream.text_stream = iter(["Fixed!"])
+        mock_final = MagicMock()
+        mock_final.usage.input_tokens = 5
+        mock_final.usage.output_tokens = 5
+        mock_stream.get_final_message.return_value = mock_final
+        mock_client = MagicMock()
+        mock_client.messages.stream.return_value = mock_stream
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch("anthropic.Anthropic", return_value=mock_client):
+                with patch.object(ex.history, "HISTORY_FILE", history_file):
+                    ex.explain_error(
+                        "some unique error xyz",
+                        model="claude-sonnet-4-6",
+                        no_history=True,
+                        no_cache=True,
+                        use_cache=False,
+                    )
+
+        assert not history_file.exists()

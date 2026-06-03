@@ -1,0 +1,130 @@
+name: errex — Explain CI errors
+description: >
+  Pipe any error message through errex to get a plain-English explanation,
+  then optionally post it as a PR comment.
+
+inputs:
+  error-text:
+    description: Error message or stack trace to explain
+    required: false
+    default: ''
+  error-file:
+    description: Path to a file containing the error (alternative to error-text)
+    required: false
+    default: ''
+  api-key:
+    description: Anthropic API key (uses ANTHROPIC_API_KEY env var if not provided)
+    required: false
+    default: ''
+  model:
+    description: Claude model to use
+    required: false
+    default: claude-sonnet-4-6
+  brief:
+    description: Use brief (one-paragraph) mode instead of full analysis
+    required: false
+    default: 'false'
+  post-comment:
+    description: Post the explanation as a PR comment (requires github-token)
+    required: false
+    default: 'false'
+  github-token:
+    description: GitHub token for posting PR comments (use secrets.GITHUB_TOKEN)
+    required: false
+    default: ''
+  comment-header:
+    description: Header text for the PR comment
+    required: false
+    default: '## 🔍 errex — CI Error Explanation'
+
+outputs:
+  explanation:
+    description: The plain-English explanation from errex
+    value: ${{ steps.explain.outputs.explanation }}
+  source:
+    description: Where the explanation came from (local, cached, or claude)
+    value: ${{ steps.explain.outputs.source }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install errex
+      shell: bash
+      run: pip install errex --quiet
+
+    - name: Run errex
+      id: explain
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.api-key != '' && inputs.api-key || env.ANTHROPIC_API_KEY }}
+      run: |
+        # Determine error source
+        if [ -n "${{ inputs.error-file }}" ] && [ -f "${{ inputs.error-file }}" ]; then
+          ERROR_TEXT=$(cat "${{ inputs.error-file }}")
+        else
+          ERROR_TEXT="${{ inputs.error-text }}"
+        fi
+
+        if [ -z "$ERROR_TEXT" ]; then
+          echo "explanation=No error text provided." >> "$GITHUB_OUTPUT"
+          echo "source=none" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        # Build flags
+        FLAGS="--no-color --ci"
+        if [ "${{ inputs.brief }}" = "true" ]; then
+          FLAGS="$FLAGS --brief"
+        fi
+        FLAGS="$FLAGS --model ${{ inputs.model }}"
+
+        # Run errex and capture output (errex --ci exits 1 by design; ignore that)
+        EXPLANATION=$(echo "$ERROR_TEXT" | errex $FLAGS 2>&1 || true)
+
+        # Strip ANSI escape codes just in case
+        EXPLANATION=$(echo "$EXPLANATION" | sed 's/\x1B\[[0-9;]*[mK]//g')
+
+        # Detect source from output
+        if echo "$EXPLANATION" | grep -q "local pattern"; then
+          SOURCE="local"
+        elif echo "$EXPLANATION" | grep -q "cached response"; then
+          SOURCE="cached"
+        else
+          SOURCE="claude"
+        fi
+
+        # Write multiline output safely
+        {
+          echo "explanation<<ERREX_EOF"
+          echo "$EXPLANATION"
+          echo "ERREX_EOF"
+        } >> "$GITHUB_OUTPUT"
+        echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+
+    - name: Post PR comment
+      if: inputs.post-comment == 'true' && inputs.github-token != '' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const header = `${{ inputs.comment-header }}`;
+          const source = `${{ steps.explain.outputs.source }}`;
+          const sourceEmoji = source === 'local' ? '⚡' : source === 'cached' ? '📦' : '🤖';
+          const explanation = `${{ steps.explain.outputs.explanation }}`;
+
+          const body = [
+            header,
+            '',
+            `> ${sourceEmoji} Source: **${source}**`,
+            '',
+            '```',
+            explanation,
+            '```',
+          ].join('\n');
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body,
+          });

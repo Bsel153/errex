@@ -1,0 +1,44 @@
+[Unit]
+Description=errex web UI
+Documentation=https://github.com/Bsel153/errex
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=errex
+Group=errex
+
+# Store secrets in /etc/errex/env (chmod 0600, owned by root or errex).
+# File format: KEY=value lines, e.g.:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   RHT_USERNAME=jsmith
+#   RHT_PASSWORD=secret
+# The leading '-' means systemd will start even if the file is missing.
+EnvironmentFile=-/etc/errex/env
+# NEVER put real credentials in Environment= lines — the unit file is world-readable.
+# Environment=ANTHROPIC_API_KEY=YOUR_KEY_HERE
+
+# All errex data (history, cache, config) lives in this user's home dir.
+# Run: sudo useradd -r -m -d /var/lib/errex errex
+WorkingDirectory=/var/lib/errex
+
+ExecStart=/usr/local/bin/errex --web --host 127.0.0.1 --port 7337
+# For HTTPS without nginx:
+# ExecStart=/usr/local/bin/errex --web --host 0.0.0.0 --port 7337 --tls --auth admin:changeme
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=errex
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/errex
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
