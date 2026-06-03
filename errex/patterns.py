@@ -103,7 +103,7 @@ PATTERNS: list[Pattern] = [
             "**Fix**: Convert explicitly:\n"
             "```python\nstr(value) + other_string\n# or\nint(string) + number\n```\n\n"
             "**Gotcha**: `+` on strings is concatenation. "
-            "Use f-strings for mixed formatting: `f\"{num} items\"`."
+            "Use f-strings for mixed formatting: `f\"{{num}} items\"`."
         ),
     ),
     Pattern(

@@ -201,7 +201,8 @@ def check_for_update() -> None:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             latest = json.loads(resp.read())["info"]["version"]
-        if latest != current:
+        from packaging.version import Version
+        if Version(latest) > Version(current):
             output.console.print(
                 f"\n[yellow]Update available:[/yellow] {current} → [bold]{latest}[/bold]  "
                 f"[dim]pip install --upgrade errex[/dim]\n"
