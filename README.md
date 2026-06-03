@@ -278,6 +278,74 @@ Example GitHub Actions step:
   run: cat build.log | errex --ci
 ```
 
+## Deployment
+
+### Docker (quickstart)
+
+```bash
+docker run -e ANTHROPIC_API_KEY=sk-... -p 7337:7337 ghcr.io/bsel153/errex:latest
+```
+
+Or with `docker-compose`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+docker-compose up -d
+```
+
+Open `http://localhost:7337` in your browser. All history, cache, and config are stored in the `errex-data` Docker volume.
+
+**With authentication and TLS** (recommended for public-facing deployments):
+
+```yaml
+# docker-compose.yml
+command: ["--auth", "admin:changeme", "--tls"]
+```
+
+### systemd (Linux server)
+
+```bash
+# 1. Create a dedicated user
+sudo useradd -r -m -d /var/lib/errex errex
+
+# 2. Install errex
+sudo pip install errex
+
+# 3. Install the service file
+sudo cp deploy/errex.service /etc/systemd/system/errex.service
+
+# 4. Set your API key
+sudo systemctl edit errex
+# Add under [Service]:
+#   Environment=ANTHROPIC_API_KEY=sk-...
+
+# 5. Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable --now errex
+
+# 6. (Optional) Add nginx reverse proxy
+sudo cp deploy/nginx.conf /etc/nginx/sites-available/errex
+sudo ln -s /etc/nginx/sites-available/errex /etc/nginx/sites-enabled/
+sudo certbot --nginx -d errex.yourdomain.com
+sudo systemctl reload nginx
+```
+
+The service listens on `127.0.0.1:7337` by default and is proxied through nginx with HTTPS.
+
+### LAN / mobile access
+
+```bash
+errex --web --host 0.0.0.0 --port 7337
+```
+
+Access from any device on your local network at `http://<your-ip>:7337`.
+
+For temporary public internet access with a shareable link and QR code:
+
+```bash
+errex --web --tunnel
+```
+
 ## What you get
 
 For any error, errex explains:
