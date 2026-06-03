@@ -40,3 +40,4 @@ include = ["errex*"]
 
 [project.scripts]
 errex = "errex.cli:main"
+errex-mcp = "errex.mcp_server:serve"

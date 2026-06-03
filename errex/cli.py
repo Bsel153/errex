@@ -254,8 +254,15 @@ def main() -> None:
                         help="Red Hat product name for the ticket")
     parser.add_argument("--rht-version", dest="rht_version", default=None, metavar="VER",
                         help="product version for the ticket")
+    parser.add_argument("--mcp", action="store_true",
+                        help="start MCP server for Claude Desktop integration (communicates over stdio)")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.mcp:
+        from .mcp_server import serve
+        serve()
+        return
 
     _constants.API_TIMEOUT = args.timeout
 
