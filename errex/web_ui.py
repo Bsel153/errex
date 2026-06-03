@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import hmac
+import html
 import json
 import os
 import re
@@ -488,7 +490,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         given = self.headers.get("Authorization", "")
         expected = "Basic " + self._auth
-        if given != expected:
+        if not hmac.compare_digest(given.encode(), expected.encode()):
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="errex"')
             self.end_headers()
@@ -536,7 +538,7 @@ class Handler(BaseHTTPRequestHandler):
                 "pre{background:#1a1d27;border:1px solid #2d3748;border-radius:8px;padding:1.25rem;"
                 "white-space:pre-wrap;word-break:break-word;font-size:0.88rem;line-height:1.7;}"
                 "a{color:#7dd3fc;}h1{color:#7dd3fc;margin-bottom:0.5rem;}</style></head>"
-                f"<body><h1>🔒 errex Privacy</h1><pre>{text}</pre></body></html>"
+                f"<body><h1>🔒 errex Privacy</h1><pre>{html.escape(text)}</pre></body></html>"
             )
             self._html(body)
             return
@@ -560,10 +562,19 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        length = int(self.headers.get("Content-Length", 0))
+        _MAX_BODY = 64 * 1024  # 64 KB — prevent memory exhaustion
+        length = min(int(self.headers.get("Content-Length", 0)), _MAX_BODY)
         body = json.loads(self.rfile.read(length))
         error_text = body.get("error", "").strip()
+        _ALLOWED_MODELS = {
+            "claude-sonnet-4-6",
+            "claude-opus-4-8",
+            "claude-haiku-4-5-20251001",
+        }
         model = body.get("model", "claude-sonnet-4-6")
+        if model not in _ALLOWED_MODELS:
+            self._json({"error": "Invalid model."}, 400)
+            return
         brief = body.get("brief", False)
         no_cache = body.get("noCache", False)
 
@@ -731,8 +742,10 @@ def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
     """
     import ssl as _ssl
     token = base64.b64encode(auth.encode()).decode() if auth else None
-    effective_host = "0.0.0.0" if tunnel else host
-    server = HTTPServer((effective_host, port), _make_handler(token))
+    if tunnel and not auth:
+        print("  ⚠  Warning: --tunnel exposes this server publicly without authentication.")
+        print("     Pass --auth user:pass to require a password.\n")
+    server = HTTPServer((host, port), _make_handler(token))
 
     scheme = "http"
     if tls or cert:

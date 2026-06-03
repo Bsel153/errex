@@ -17,6 +17,10 @@ COPY errex/ ./errex/
 
 RUN pip install --no-cache-dir .
 
+# Run as a non-root user so a container escape doesn't give uid 0.
+RUN useradd -r -u 1001 -d /data -s /sbin/nologin errex && mkdir -p /data && chown errex:errex /data
+USER errex
+
 # /data is the persistent volume — HOME is set here so all ~/.errex_* paths
 # resolve to /data/.errex_* and survive container restarts.
 ENV HOME=/data

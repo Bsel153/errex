@@ -19,25 +19,30 @@ def generate_self_signed_cert(cert_dir: Path = _TLS_DIR) -> tuple[str, str]:
     Returns (cert_path, key_path). Requires openssl on PATH.
     The cert is valid for 365 days and only suitable for local/private use.
     """
-    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cert_dir.chmod(0o700)  # enforce even if dir already existed
     cert_path = cert_dir / "errex.crt"
     key_path = cert_dir / "errex.key"
 
     if cert_path.exists() and key_path.exists():
         return str(cert_path), str(key_path)
 
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", str(key_path),
-            "-out", str(cert_path),
-            "-days", "365", "-nodes",
-            "-subj", "/CN=errex-local/O=errex/C=US",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    key_path.chmod(0o600)
+    old_umask = os.umask(0o177)  # key file created 0600 from the start
+    try:
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048",
+                "-keyout", str(key_path),
+                "-out", str(cert_path),
+                "-days", "365", "-nodes",
+                "-subj", "/CN=errex-local/O=errex/C=US",
+                "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:errex.local",
+            ],
+            check=True,
+            capture_output=True,
+        )
+    finally:
+        os.umask(old_umask)
     return str(cert_path), str(key_path)
 
 

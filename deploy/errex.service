@@ -9,9 +9,15 @@ Type=simple
 User=errex
 Group=errex
 
-# Set your Anthropic API key here, or use an EnvironmentFile
-Environment=ANTHROPIC_API_KEY=YOUR_KEY_HERE
-# EnvironmentFile=/etc/errex/env
+# Store secrets in /etc/errex/env (chmod 0600, owned by root or errex).
+# File format: KEY=value lines, e.g.:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   RHT_USERNAME=jsmith
+#   RHT_PASSWORD=secret
+# The leading '-' means systemd will start even if the file is missing.
+EnvironmentFile=-/etc/errex/env
+# NEVER put real credentials in Environment= lines — the unit file is world-readable.
+# Environment=ANTHROPIC_API_KEY=YOUR_KEY_HERE
 
 # All errex data (history, cache, config) lives in this user's home dir.
 # Run: sudo useradd -r -m -d /var/lib/errex errex
