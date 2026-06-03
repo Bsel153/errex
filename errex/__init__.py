@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Import submodules so ex.history, ex.config etc. are accessible (needed for test patches)
-from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing, digest, security
+from . import history, config, core, utils, watch, code_tools, explainers, setup_tools, _paths, _constants, output, patterns, cache, ticketing, digest, security, scan
 
 # Re-export paths for backward compat
 from ._paths import HISTORY_FILE, CONFIG_FILE

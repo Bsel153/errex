@@ -28,6 +28,11 @@ Repository = "https://github.com/Bsel153/errex"
 
 [project.optional-dependencies]
 dev = ["pytest"]
+scan = [
+    "zeroconf>=0.130",
+    "paho-mqtt>=2.0",
+    "python-nmap>=0.7",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

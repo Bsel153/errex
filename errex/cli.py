@@ -79,7 +79,17 @@ def main() -> None:
                         help="expose the web UI publicly via a free Cloudflare quick tunnel (no account needed)")
     parser.add_argument("--auth", default=None, metavar="USER:PASS",
                         help="enable HTTP Basic auth on the web UI (format: user:password)")
-    parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
+    parser.add_argument("--scan", action="store_true",
+                        help="run a security scan (firewall, CVEs, misconfigs) on this machine")
+    parser.add_argument("--scan-network", action="store_true", dest="scan_network",
+                        help="also discover and check IoT/smart home devices on the LAN (use with --scan)")
+    parser.add_argument("--scan-severity", default=None, metavar="LEVEL", dest="scan_severity",
+                        choices=["critical", "high", "medium", "low", "info"],
+                        help="only show findings at this severity level and above (use with --scan)")
+    parser.add_argument("--scan-fix", action="store_true", dest="scan_fix",
+                        help="prompt to apply safe fixes after scanning (use with --scan)")
+    parser.add_argument("--scan-no-explain", action="store_true", dest="scan_no_explain",
+                        help="skip Claude explanations in --scan (faster, no API key needed)")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
     parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
     parser.add_argument("--chat", action="store_true", help="stay in a follow-up Q&A loop after the explanation")
@@ -536,7 +546,96 @@ def main() -> None:
         return
 
     if args.scan:
-        scan_logs()
+        import json as _json
+        import os as _os
+        from .scan import run_scan, explain_findings, auto_fix, detect_platform
+        from .scanners._base import SEVERITIES
+
+        plat = detect_platform()
+        _severity_icons = {
+            "critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪",
+        }
+
+        def _progress(name, done, total):
+            output.console.print(f"  Checking [dim]{name}[/dim]…", end="\r")
+
+        output.console.print(f"\n  Scanning [bold]{plat}[/bold]…\n")
+        result = run_scan(
+            network=args.scan_network,
+            severity_filter=args.scan_severity,
+            progress_cb=_progress,
+        )
+        output.console.print(" " * 60, end="\r")  # clear progress line
+
+        if args.output == "json" if hasattr(args, "output") and args.output and args.output.endswith(".json") else False:
+            print(_json.dumps(result.to_dict(), indent=2))
+            return
+
+        if not result.findings:
+            output.console.print("  [green]✔ No issues found.[/green]\n")
+            return
+
+        # Display findings grouped by severity
+        for severity in SEVERITIES:
+            for finding in result.findings:
+                if finding.severity != severity:
+                    continue
+                icon = _severity_icons.get(severity, "•")
+                output.console.print(
+                    f"\n  {icon} [bold]{severity.upper()}[/bold]  {finding.title}"
+                )
+                for line in finding.detail.splitlines()[:5]:
+                    output.console.print(f"     [dim]{line}[/dim]")
+                if finding.fix_cmd:
+                    output.console.print(f"     Fix: [cyan]{finding.fix_cmd}[/cyan]")
+
+        total = len(result.findings)
+        fixable = sum(1 for f in result.findings if f.is_fixable())
+        output.console.print(
+            f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
+        )
+
+        # Explain with Claude
+        if not args.scan_no_explain:
+            api_key = _os.environ.get("ANTHROPIC_API_KEY")
+            if api_key:
+                output.console.print("  [bold]Explanations[/bold] (Claude)\n")
+                for finding in result.findings:
+                    if finding.severity == "info":
+                        continue
+                    icon = _severity_icons.get(finding.severity, "•")
+                    output.console.print(f"  {icon} [bold]{finding.title}[/bold]")
+
+                    def _stream(fid, tok, _fid=finding.id):
+                        if fid == _fid:
+                            output.console.print(tok, end="")
+
+                    explain_findings([finding], api_key, stream_cb=_stream)
+                    output.console.print("\n")
+
+        # Batch fix by severity
+        if args.scan_fix:
+            fixable_findings = [f for f in result.findings if f.is_fixable()]
+            if not fixable_findings:
+                output.console.print("  No auto-fixable issues found.\n")
+            else:
+                for severity in SEVERITIES:
+                    batch = [f for f in fixable_findings if f.severity == severity]
+                    if not batch:
+                        continue
+                    output.console.print(
+                        f"\n  Apply [bold]{len(batch)} {severity.upper()}[/bold] fix(es)?"
+                    )
+                    for f in batch:
+                        output.console.print(
+                            f"    • {f.title}  [dim]→  {f.fix_cmd or 'python fix'}[/dim]"
+                        )
+                    resp = input("  [y/N] ").strip().lower()
+                    if resp == "y":
+                        fix_results = auto_fix(batch)
+                        for r in fix_results:
+                            mark = "[green]✔[/green]" if r.success else "[red]✗[/red]"
+                            output.console.print(f"  {mark} {r.message}")
         return
 
     if args.export:
