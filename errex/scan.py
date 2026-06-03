@@ -57,7 +57,9 @@ def run_scan(
     elif plat == "windows":
         from .scanners import windows
         checks.extend(windows.get_checks())
-    # linux: fall through to CVE-only check
+    elif plat == "linux":
+        from .scanners import linux
+        checks.extend(linux.get_checks())
 
     from .scanners import cve
     checks.append(("Python Package CVEs", cve.check_python_packages))

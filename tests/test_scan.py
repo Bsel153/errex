@@ -401,6 +401,111 @@ class TestOrchestrator:
         assert any("CVE" in c for c in calls)
 
 
+# ── Linux scanner ─────────────────────────────────────────────────────────────
+
+from errex.scanners import linux
+
+
+class TestLinuxScanner:
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_firewall_ufw_inactive_iptables_accept(self, mock_run):
+        def side_effect(cmd, **kwargs):
+            if cmd[0] == "ufw":
+                return _mock_run("Status: inactive\n", returncode=0)
+            if cmd[0] == "iptables":
+                return _mock_run(
+                    "Chain INPUT (policy ACCEPT)\ntarget prot opt source destination\n",
+                    returncode=0,
+                )
+            return _mock_run("", returncode=0)
+        mock_run.side_effect = side_effect
+        f = linux.check_firewall()
+        assert f is not None
+        assert f.severity == "high"
+        assert f.id == "linux-firewall-disabled"
+        assert f.fix_cmd == "sudo ufw enable"
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_firewall_ufw_active_returns_none(self, mock_run):
+        mock_run.return_value = _mock_run("Status: active\n", returncode=0)
+        assert linux.check_firewall() is None
+
+    @patch("builtins.open")
+    def test_ssh_config_permit_root_login(self, mock_open):
+        config = "PermitRootLogin yes\nPasswordAuthentication no\n"
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read = MagicMock(return_value=config)
+        f = linux.check_ssh_config()
+        assert f is not None
+        assert f.severity == "high"
+        assert f.id == "linux-ssh-permit-root-login"
+        assert "sshd_config" in f.fix_cmd
+
+    @patch("builtins.open")
+    def test_ssh_config_hardened_returns_none(self, mock_open):
+        config = "PermitRootLogin no\nPasswordAuthentication no\n"
+        mock_open.return_value.__enter__ = lambda s: s
+        mock_open.return_value.__exit__ = MagicMock(return_value=False)
+        mock_open.return_value.read = MagicMock(return_value=config)
+        assert linux.check_ssh_config() is None
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_world_writable_finds_files(self, mock_run):
+        mock_run.return_value = _mock_run(
+            "/etc/insecure.conf\n/etc/bad.cfg\n", returncode=0
+        )
+        f = linux.check_world_writable()
+        assert f is not None
+        assert f.severity == "high"
+        assert f.id == "linux-world-writable-etc"
+        assert "chmod o-w" in f.fix_cmd
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_world_writable_clean_returns_none(self, mock_run):
+        mock_run.return_value = _mock_run("", returncode=0)
+        assert linux.check_world_writable() is None
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_fail2ban_not_running(self, mock_run):
+        mock_run.return_value = _mock_run("inactive\n", returncode=1)
+        f = linux.check_fail2ban()
+        assert f is not None
+        assert f.severity == "low"
+        assert f.id == "linux-fail2ban-inactive"
+        assert "systemctl enable" in f.fix_cmd
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_fail2ban_active_returns_none(self, mock_run):
+        mock_run.return_value = _mock_run("active\n", returncode=0)
+        assert linux.check_fail2ban() is None
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_sudo_nopasswd_detected(self, mock_run):
+        mock_run.return_value = _mock_run(
+            "/etc/sudoers.d/deploy:deploy ALL=(ALL) NOPASSWD: /usr/bin/deploy\n",
+            returncode=0,
+        )
+        f = linux.check_sudo_nopasswd()
+        assert f is not None
+        assert f.severity == "high"
+        assert f.id == "linux-sudo-nopasswd"
+        assert f.fix_cmd is None
+
+    @patch("errex.scanners.linux.subprocess.run")
+    def test_sudo_nopasswd_clean_returns_none(self, mock_run):
+        mock_run.return_value = _mock_run("", returncode=1)
+        assert linux.check_sudo_nopasswd() is None
+
+    def test_get_checks_returns_list(self):
+        checks = linux.get_checks()
+        assert isinstance(checks, list)
+        assert len(checks) >= 5
+        for name, fn in checks:
+            assert isinstance(name, str)
+            assert callable(fn)
+
+
 # ── Integration: CLI --scan flag ──────────────────────────────────────────────
 
 import subprocess as _subprocess
