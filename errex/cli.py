@@ -90,7 +90,11 @@ def main() -> None:
                         help="prompt to apply safe fixes after scanning (use with --scan)")
     parser.add_argument("--scan-no-explain", action="store_true", dest="scan_no_explain",
                         help="skip Claude explanations in --scan (faster, no API key needed)")
+    parser.add_argument("--verify", action="store_true",
+                        help="after --scan-fix or --fix-apply, re-run to confirm the fix worked")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
+    parser.add_argument("--init", action="store_true",
+                        help="detect project tech stack and save context for richer explanations")
     parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
     parser.add_argument("--chat", action="store_true", help="stay in a follow-up Q&A loop after the explanation")
     parser.add_argument("--tokens", action="store_true", help="show token usage after each explanation")
@@ -262,6 +266,11 @@ def main() -> None:
     if args.mcp:
         from .mcp_server import serve
         serve()
+        return
+
+    if args.init:
+        from .init_cmd import run_init
+        run_init()
         return
 
     _constants.API_TIMEOUT = args.timeout
@@ -643,6 +652,16 @@ def main() -> None:
                         for r in fix_results:
                             mark = "[green]✔[/green]" if r.success else "[red]✗[/red]"
                             output.console.print(f"  {mark} {r.message}")
+        if args.verify:
+            from .scan import verify_scan
+            output.console.print("\n[bold]Verifying fixes...[/bold]")
+            vr = verify_scan(result)
+            if vr["resolved"]:
+                output.console.print(f"[green]✓ Resolved:[/green] {', '.join(vr['resolved'])}")
+            if vr["still_present"]:
+                output.console.print(f"[yellow]⚠ Still present:[/yellow] {', '.join(vr['still_present'])}")
+            if vr["new_issues"]:
+                output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
         return
 
     if args.export:

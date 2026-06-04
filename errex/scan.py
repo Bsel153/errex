@@ -182,3 +182,20 @@ def auto_fix(
                 results.append(FixResult(finding.id, False, str(exc)))
 
     return results
+
+
+def verify_scan(
+    before: "ScanResult",
+    platform: str | None = None,
+    network: bool = False,
+) -> dict:
+    """Re-run the scan and compare to a previous result to see what was resolved."""
+    after = run_scan(platform=platform or before.platform, network=network)
+    before_ids = {f.id for f in before.findings}
+    after_ids = {f.id for f in after.findings}
+    return {
+        "resolved": sorted(before_ids - after_ids),
+        "still_present": sorted(before_ids & after_ids),
+        "new_issues": sorted(after_ids - before_ids),
+        "after": after,
+    }
