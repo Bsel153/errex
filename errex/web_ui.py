@@ -33,15 +33,25 @@ HTML = r"""<!DOCTYPE html>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>errex</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=Red+Hat+Text:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    (function(){var t=localStorage.getItem('errex-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0f1117; --panel: #1a1d27; --border: #2d3748;
-      --text: #e2e8f0; --muted: #64748b; --accent: #7dd3fc;
-      --green: #86efac; --red: #f87171; --r: 8px;
+      --bg: #ffffff; --panel: #f5f5f5; --border: #d0d0d0;
+      --text: #151515; --muted: #6a6e73; --accent: #EE0000;
+      --green: #3d9970; --red: #EE0000; --r: 8px;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    [data-theme="dark"] {
+      --bg: #151515; --panel: #1f1f1f; --border: #3a3a3a;
+      --text: #e2e8f0; --muted: #8a8d90; --accent: #EE0000;
+      --green: #86efac; --red: #f87171;
+    }
+    body { font-family: "Red Hat Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
            background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
 
     /* ── Two-column layout ── */
@@ -49,7 +59,10 @@ HTML = r"""<!DOCTYPE html>
            height: 100vh; }
     .hdr { grid-column: 1/-1; padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border);
            display: flex; align-items: center; gap: 0.75rem; }
-    .hdr h1 { font-size: 1.15rem; font-weight: 700; color: var(--accent); }
+    .hdr h1 { font-size: 1.15rem; font-weight: 700; color: var(--accent); font-family: "Red Hat Display", sans-serif; }
+    #theme-toggle { margin-left: 0.5rem; background: none; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer; padding: 0.3rem 0.6rem; font-size: 0.82rem; transition: border-color 0.15s; }
+    #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
     .hdr .sub { color: var(--muted); font-size: 0.82rem; }
     .main { padding: 1.1rem; overflow-y: auto; border-right: 1px solid var(--border);
             display: flex; flex-direction: column; gap: 0.75rem; }
@@ -75,7 +88,7 @@ HTML = r"""<!DOCTYPE html>
       background: var(--panel); border: none; color: var(--muted); padding: 0.38rem 0.75rem;
       font-size: 0.8rem; cursor: pointer; transition: background 0.15s, color 0.15s;
     }
-    .tabs button.on { background: var(--accent); color: #0f1117; font-weight: 600; }
+    .tabs button.on { background: var(--accent); color: #fff; font-weight: 600; }
     .chk { display: flex; align-items: center; gap: 0.3rem; cursor: pointer;
            font-size: 0.8rem; color: var(--muted); user-select: none; }
     .chk input { accent-color: var(--accent); }
@@ -238,6 +251,7 @@ HTML = r"""<!DOCTYPE html>
     <h1>errex</h1>
     <span class="sub">paste any error · get a plain-English explanation</span>
     <a href="/privacy" target="_blank" style="margin-left:auto;font-size:0.72rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:0.18rem 0.5rem;" title="Privacy policy — what errex sees and stores">🔒 Privacy</a>
+    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">🌙</button>
   </header>
 
   <main class="main">
@@ -572,6 +586,17 @@ HTML = r"""<!DOCTYPE html>
   }
 
   loadHist();
+
+  function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('errex-theme', next);
+    document.getElementById('theme-toggle').textContent = next === 'dark' ? '🌙' : '☀️';
+  }
+  // Set initial icon
+  (function(){ var t=document.documentElement.getAttribute('data-theme')||'dark';
+    var btn=document.getElementById('theme-toggle'); if(btn) btn.textContent=t==='dark'?'🌙':'☀️'; })();
 </script>
 </body>
 </html>"""

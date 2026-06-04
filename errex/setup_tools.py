@@ -20,8 +20,6 @@ from .config import load_config
 from .core import explain_error, call_claude
 from .explainers import explain_exit_code
 from .utils import notify
-from .cache import cache_stats
-from .patterns import list_patterns
 
 
 def detect_environment() -> dict:
@@ -113,94 +111,89 @@ def run_setup() -> None:
 
 
 def run_doctor(offline: bool = False) -> None:
-    """Check that errex is set up and working correctly — health dashboard."""
-    try:
-        _ver = importlib.metadata.version("errex")
-    except importlib.metadata.PackageNotFoundError:
-        _ver = "dev"
-
-    SEP = "─" * 41
-    output.console.print(f"\n[bold cyan]errex v{_ver} — Health Check[/bold cyan]")
-    output.console.print(f"[dim]{SEP}[/dim]")
-
+    """Check that errex is set up and working correctly."""
+    output.console.rule("[bold cyan]errex — Doctor[/bold cyan]")
+    output.console.print()
     ok = True
-    rows = []  # list of (icon, label, detail)
 
     # 1. API key
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if api_key:
-        last4 = api_key[-4:] if len(api_key) >= 4 else api_key
-        masked = f"set ({api_key[:6]}***...{last4})"
-        rows.append(("[green]✓[/green]", "API key", masked))
+        output.console.print(f"[green]✓[/green] ANTHROPIC_API_KEY is set ({api_key[:8]}…)")
     else:
-        rows.append(("[red]✗[/red]", "API key", "not set — get one at https://console.anthropic.com/"))
+        output.console.print("[red]✗[/red] ANTHROPIC_API_KEY is not set")
+        output.console.print("  [dim]Get one at https://console.anthropic.com/[/dim]")
         ok = False
 
-    # 2. Config file
+    # 2. Live API ping
+    if api_key:
+        try:
+            client = anthropic.Anthropic(api_key=api_key, timeout=_constants.API_TIMEOUT)
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=8,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            output.console.print("[green]✓[/green] Anthropic API reachable")
+        except Exception as e:
+            output.console.print(f"[red]✗[/red] Anthropic API error: {e}")
+            ok = False
+
+    # 3. Config file
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE) as f:
                 cfg = json.load(f)
-            model = cfg.get("model", "default")
-            rows.append(("[green]✓[/green]", "Config file", f"{CONFIG_FILE} (model: {model})"))
+            output.console.print(f"[green]✓[/green] Config file OK ({CONFIG_FILE})")
         except json.JSONDecodeError as e:
-            rows.append(("[red]✗[/red]", "Config file", f"invalid JSON — {e}"))
+            output.console.print(f"[red]✗[/red] Config file has invalid JSON: {e}")
             ok = False
     else:
-        rows.append(("[dim]–[/dim]", "Config file", f"not found (using defaults)"))
+        output.console.print(f"[dim]–[/dim] No config file (using defaults) — run [cyan]errex --setup[/cyan] to create one")
 
-    # 3. History
+    # 4. History file
     if HISTORY_FILE.exists():
-        with open(HISTORY_FILE, encoding="utf-8", errors="replace") as f:
+        with open(HISTORY_FILE) as f:
             count = sum(1 for line in f if line.strip())
-        rows.append(("[green]✓[/green]", "History", f"{count} entries · {HISTORY_FILE}"))
+        output.console.print(f"[green]✓[/green] History file OK ({count} entries at {HISTORY_FILE})")
     else:
-        rows.append(("[dim]–[/dim]", "History", f"no history yet · {HISTORY_FILE}"))
+        output.console.print("[dim]–[/dim] No history file yet (created on first use)")
 
-    # 4. Response cache
+    # 5. Version check
     try:
-        stats = cache_stats()
-        c_entries = stats["entries"]
-        c_size_kb = stats["size_bytes"] / 1024
-        c_path = stats["path"]
-        if c_entries > 0:
-            rows.append(("[green]✓[/green]", "Response cache", f"{c_entries} entries · {c_size_kb:.0f} KB · {c_path}"))
+        current = importlib.metadata.version("errex")
+        req = urllib.request.Request(
+            "https://pypi.org/pypi/errex/json",
+            headers={"User-Agent": f"errex/{current}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            latest = json.loads(resp.read())["info"]["version"]
+        if latest == current:
+            output.console.print(f"[green]✓[/green] errex {current} is up to date")
         else:
-            rows.append(("[dim]–[/dim]", "Response cache", f"empty · {c_path}"))
-    except Exception as e:
-        rows.append(("[dim]–[/dim]", "Response cache", f"unavailable ({e})"))
+            output.console.print(f"[yellow]![/yellow] errex {current} → {latest} available ([dim]pip install --upgrade errex[/dim])")
+    except Exception:
+        output.console.print("[dim]–[/dim] Could not check PyPI for updates")
 
-    # 5. Pattern count
-    try:
-        pattern_count = len(list_patterns())
-        rows.append(("[green]✓[/green]", "Patterns", f"{pattern_count} built-in patterns loaded"))
-    except Exception as e:
-        rows.append(("[dim]–[/dim]", "Patterns", f"unavailable ({e})"))
-
-    # 6. API connection check
-    if not api_key or offline:
-        reason = "no key" if not api_key else "--offline"
-        rows.append(("[dim]–[/dim]", "API connection", f"(skipped — use --check-api to test)"))
-    else:
-        # Fast key format check instead of live API call
-        if api_key.startswith("sk-ant-"):
-            rows.append(("[green]✓[/green]", "API connection", "key format OK (use --check-api for live test)"))
-        else:
-            rows.append(("[yellow]![/yellow]", "API connection", "key does not start with sk-ant- — may be invalid"))
-
-    # Render the table
-    label_width = max(len(label) for _, label, _ in rows)
-    for icon, label, detail in rows:
-        padded = label.ljust(label_width)
-        output.console.print(f" {icon}  {padded}  {detail}")
-
-    output.console.print(f"[dim]{SEP}[/dim]\n")
-
+    output.console.print()
     if ok:
-        output.console.print("[green]All critical checks passed.[/green]\n")
+        output.console.rule("[green]All checks passed[/green]")
     else:
-        output.console.print("[red]Some checks failed — see above.[/red]\n")
+        output.console.rule("[red]Some checks failed — see above[/red]")
         sys.exit(1)
+
+
+def print_email_report_cron(email: str, period: str = "weekly") -> None:
+    """Print cron entries for automated health reports."""
+    cron_entries = {
+        "daily":   "0 8 * * *",
+        "weekly":  "0 8 * * 1",
+        "monthly": "0 8 1 * *",
+    }
+    schedule = cron_entries.get(period, "0 8 * * 1")
+    cmd = f"errex --email-report {email} --report-period {period}"
+    from rich.console import Console
+    Console().print(f"\nAdd to crontab ([dim]crontab -e[/dim]):\n\n[cyan]{schedule} {cmd}[/cyan]\n")
 
 
 def install_shell() -> None:

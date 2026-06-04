@@ -81,6 +81,12 @@ def main() -> None:
                         help="enable HTTP Basic auth on the web UI (format: user:password)")
     parser.add_argument("--scan", action="store_true",
                         help="run a security scan (firewall, CVEs, misconfigs) on this machine")
+    parser.add_argument("--scan-schedule", metavar="FREQ",
+                        choices=["hourly", "daily", "weekly"],
+                        dest="scan_schedule",
+                        help="print setup instructions for automatic scanning (hourly/daily/weekly)")
+    parser.add_argument("--scan-status", action="store_true", dest="scan_status",
+                        help="show when the last automatic scan ran")
     parser.add_argument("--scan-network", action="store_true", dest="scan_network",
                         help="also discover and check IoT/smart home devices on the LAN (use with --scan)")
     parser.add_argument("--scan-severity", default=None, metavar="LEVEL", dest="scan_severity",
@@ -175,6 +181,21 @@ def main() -> None:
                         help="digest window in hours (default: 24)")
     parser.add_argument("--digest-webhook", dest="digest_webhook", default=None, metavar="URL",
                         help="send digest to a Slack/Discord webhook URL")
+    parser.add_argument("--email-report", metavar="EMAIL", dest="email_report", default=None,
+                        help="send a device health report to this address (use with --report-period)")
+    parser.add_argument("--report-period", choices=["daily", "weekly", "monthly"], default="weekly",
+                        dest="report_period",
+                        help="period for --email-report (default: weekly)")
+    parser.add_argument("--report-preview", action="store_true", dest="report_preview",
+                        help="print the HTML health report to stdout without sending")
+    parser.add_argument("--smtp-host", metavar="HOST", dest="smtp_host", default="",
+                        help="SMTP host for --email-report")
+    parser.add_argument("--smtp-port", metavar="PORT", type=int, dest="smtp_port", default=587,
+                        help="SMTP port (default: 587)")
+    parser.add_argument("--smtp-user", metavar="USER", dest="smtp_user", default="",
+                        help="SMTP username")
+    parser.add_argument("--smtp-password", metavar="PASS", dest="smtp_password", default="",
+                        help="SMTP password (prefer env var ERREX_SMTP_PASSWORD)")
     parser.add_argument("--find-name", metavar="NAME", dest="find_name",
                         help="retrieve a history entry saved with --save-as NAME")
     parser.add_argument("--timeout", metavar="N", type=int, default=30,
@@ -272,6 +293,29 @@ def main() -> None:
         from .init_cmd import run_init
         run_init()
         return
+
+    if args.scan_schedule:
+        from ._scan_scheduler import setup_cron
+        output.console.print(setup_cron(args.scan_schedule))
+        return
+
+    if args.scan_status:
+        from ._scan_scheduler import print_scan_status
+        print_scan_status()
+        return
+
+    # First-run scan (once only, no API key needed)
+    _skip_first_scan = (
+        args.scan or args.setup
+        or getattr(args, "scan_schedule", None)
+        or getattr(args, "scan_status", False)
+        or args.history is not None or args.stats
+        or args.list_profiles or args.completion or args.doctor
+    )
+    if not _skip_first_scan:
+        from ._first_run import is_first_run, run_first_scan
+        if is_first_run():
+            run_first_scan()
 
     _constants.API_TIMEOUT = args.timeout
 
@@ -531,6 +575,25 @@ def main() -> None:
         )
         return
 
+    if args.report_preview:
+        from .email_report import print_report
+        print_report(period=args.report_period)
+        return
+
+    if args.email_report:
+        from .email_report import send_email_report
+        import os as _os
+        send_email_report(
+            to_addr=args.email_report,
+            smtp_host=args.smtp_host or cfg.get("smtp_host", "localhost"),
+            smtp_port=args.smtp_port or int(cfg.get("smtp_port", 587)),
+            smtp_user=args.smtp_user or cfg.get("smtp_user", ""),
+            smtp_password=args.smtp_password or _os.environ.get("ERREX_SMTP_PASSWORD", "") or cfg.get("smtp_password", ""),
+            period=args.report_period,
+        )
+        output.console.print(f"[green]✓[/green] Health report sent to {args.email_report}")
+        return
+
     if args.digest:
         from .digest import generate_digest, format_digest_text, send_digest
         d = generate_digest(since_hours=args.digest_since)
@@ -582,6 +645,11 @@ def main() -> None:
             progress_cb=_progress,
         )
         output.console.print(" " * 60, end="\r")  # clear progress line
+        try:
+            from ._scan_scheduler import log_scan_result
+            log_scan_result(result)
+        except Exception:
+            pass
 
         if args.output == "json" if hasattr(args, "output") and args.output and args.output.endswith(".json") else False:
             print(_json.dumps(result.to_dict(), indent=2))
