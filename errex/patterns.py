@@ -1092,6 +1092,176 @@ PATTERNS: list[Pattern] = [
             "grant both if connecting via TCP/IP and Unix socket."
         ),
     ),
+    # ── Java ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Java — NullPointerException",
+        regex=re.compile(r"NullPointerException"),
+        explanation=(
+            "A variable or return value is `null` where an object is expected. "
+            "Common: calling a method on an uninitialized field, or a method that returns null "
+            "and is immediately chained. Fix: add null check before access, or use `Optional<T>`."
+        ),
+    ),
+    Pattern(
+        title="Java — ClassCastException",
+        regex=re.compile(r"ClassCastException: (.+?) cannot be cast(?: to(?: class)?)? (.+)"),
+        explanation=(
+            "`{0}` can't be cast to `{1}`. "
+            "Use `instanceof` before casting: `if (obj instanceof {1} x) {{ ... }}`."
+        ),
+    ),
+    Pattern(
+        title="Java — ArrayIndexOutOfBoundsException",
+        regex=re.compile(r"ArrayIndexOutOfBoundsException: Index (\d+) out of bounds for length (\d+)"),
+        explanation=(
+            "Accessed index `{0}` on an array of length `{1}`. "
+            "Valid range: 0 to `{1}-1`. Guard: `if (i < arr.length)`."
+        ),
+    ),
+    Pattern(
+        title="Java — StackOverflowError (infinite recursion)",
+        regex=re.compile(r"StackOverflowError"),
+        explanation=(
+            "Infinite or too-deep recursion. Add or fix the base case in your recursive method, "
+            "or rewrite iteratively with an explicit stack."
+        ),
+    ),
+    Pattern(
+        title="Java — NumberFormatException",
+        regex=re.compile(r'NumberFormatException: For input string: "([^"]+)"'),
+        explanation=(
+            '"{0}" can\'t be parsed as a number. '
+            "Wrap in `try {{ int n = Integer.parseInt(s); }} catch (NumberFormatException e) {{ ... }}`."
+        ),
+    ),
+    Pattern(
+        title="Java — NoSuchMethodError",
+        regex=re.compile(r"NoSuchMethod(?:Exception|Error).*?(\w+\([^)]*\))"),
+        explanation=(
+            "Method `{0}` doesn't exist at runtime. Usually a stale compiled `.class` file — "
+            "do a clean build (`mvn clean install` or `./gradlew clean build`)."
+        ),
+    ),
+    Pattern(
+        title="Java — OutOfMemoryError (heap)",
+        regex=re.compile(r"OutOfMemoryError: Java heap space"),
+        explanation=(
+            "JVM ran out of heap. Increase with `-Xmx512m`, check for memory leaks with a profiler, "
+            "and avoid holding large collections in long-lived objects."
+        ),
+    ),
+    Pattern(
+        title="Java — Uncaught exception in thread",
+        regex=re.compile(r'Exception in thread "([^"]+)" ([\w.]+(?:Exception|Error)): (.+)'),
+        explanation=(
+            "Thread `{0}` crashed with `{1}: {2}`. "
+            "Find the first `at your.package` line in the stack trace below — that's where it happened."
+        ),
+    ),
+    # ── C/C++ ────────────────────────────────────────────────────────────────
+    Pattern(
+        title="C/C++ — Segmentation fault",
+        regex=re.compile(r"[Ss]egmentation fault"),
+        explanation=(
+            "Program accessed invalid memory — null/dangling pointer, buffer overflow, or use-after-free. "
+            "Debug: `gdb ./program core` then `bt`. "
+            "Compile with `-fsanitize=address` to pinpoint the exact line."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Linker error: undefined reference",
+        regex=re.compile(r"undefined reference to '([^']+)'"),
+        explanation=(
+            "Linker can't find `{0}`. Either the library isn't linked (`-lm`, `-lpthread`, etc.), "
+            "the object file is missing from the build, or there's a C/C++ name-mangling mismatch "
+            "(use `extern \"C\"` for C functions called from C++)."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Undeclared identifier",
+        regex=re.compile(r"error: use of undeclared identifier '([^']+)'"),
+        explanation=(
+            "`{0}` hasn't been declared at this point. Check for a missing `#include`, a typo, "
+            "or that the declaration isn't hidden inside an `#ifdef` block."
+        ),
+    ),
+    Pattern(
+        title="C++ — No matching overload",
+        regex=re.compile(r"error: no matching function for call to '([^']+)'"),
+        explanation=(
+            "No overload of `{0}` matches the argument types passed. "
+            "The `note:` lines below usually list the candidates — compare argument types carefully."
+        ),
+    ),
+    Pattern(
+        title="C — Heap corruption (double free or invalid pointer)",
+        regex=re.compile(r"free\(\): invalid pointer|double free or corruption"),
+        explanation=(
+            "Memory freed twice, or a non-malloc pointer passed to `free`. "
+            "Use `valgrind --leak-check=full ./program` or `-fsanitize=address` to find the exact location."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Incompatible types",
+        regex=re.compile(r"error: incompatible types.*cannot convert '([^']+)' to '([^']+)'"),
+        explanation=(
+            "`{0}` can't implicitly convert to `{1}`. "
+            "Use an explicit cast `({1}) value`, but verify the conversion is semantically valid first."
+        ),
+    ),
+    # ── Ruby ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Ruby — NoMethodError",
+        regex=re.compile(r"NoMethodError: undefined method '([^']+)' for ([^\n:]+)"),
+        explanation=(
+            "`{1}` doesn't have a method `.{0}`. "
+            "Check: typo in method name, wrong object type, or calling a String method on `nil`. "
+            "Use `p obj.class` to inspect the actual type."
+        ),
+    ),
+    Pattern(
+        title="Ruby — NameError: uninitialized constant",
+        regex=re.compile(r"NameError: uninitialized constant ([\w:]+)"),
+        explanation=(
+            "Constant `{0}` is not defined. Usually a missing `require`, misspelled class/module name, "
+            "or a gem not in the load path. "
+            "Check `require '{0}'.downcase` or the gem's documented require path."
+        ),
+    ),
+    Pattern(
+        title="Ruby — LoadError",
+        regex=re.compile(r"LoadError: cannot load such file -- (.+)"),
+        explanation=(
+            "Can't load `{0}`. Run `gem install {0}` or add it to your Gemfile. "
+            "For local files, use `require_relative` instead of `require`."
+        ),
+    ),
+    Pattern(
+        title="Ruby — SyntaxError",
+        regex=re.compile(r"SyntaxError: .+: unexpected (.+)"),
+        explanation=(
+            "Parser hit an unexpected `{0}`. "
+            "Usually a missing `end`, mismatched `do`/`end` or `{{`/`}}`, or wrong use of `=>` vs `:`. "
+            "Check the line number and the few lines above it."
+        ),
+    ),
+    Pattern(
+        title="Ruby — ArgumentError: wrong argument count",
+        regex=re.compile(r"ArgumentError: wrong number of arguments \(given (\d+), expected (\d+[^)]*)\)"),
+        explanation=(
+            "Called with {0} argument(s), expected {1}. "
+            "Check the method signature and match your call to it."
+        ),
+    ),
+    Pattern(
+        title="Ruby — Errno::ENOENT: file not found",
+        regex=re.compile(r"Errno::ENOENT: No such file or directory.*?-- (.+)"),
+        explanation=(
+            "File doesn't exist at that path. "
+            "Check the path string, current working directory (`Dir.pwd`), "
+            "and that the file exists before this code runs."
+        ),
+    ),
 ]
 
 
