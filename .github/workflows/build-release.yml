@@ -1,0 +1,84 @@
+name: Build Standalone Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    name: Build macOS App
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" pyinstaller pywebview
+
+      - name: Build .app
+        run: pyinstaller errex.spec --clean --noconfirm
+
+      - name: Package .dmg
+        run: |
+          hdiutil create \
+            -volname errex \
+            -srcfolder dist/errex.app \
+            -ov -format UDZO \
+            dist/errex-mac.dmg
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: errex-mac
+          path: dist/errex-mac.dmg
+
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" pyinstaller pywebview
+
+      - name: Build .exe
+        run: pyinstaller errex.spec --clean --noconfirm
+
+      - name: Zip distribution
+        shell: powershell
+        run: |
+          Compress-Archive -Path dist\errex\* -DestinationPath dist\errex-windows.zip
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: errex-windows
+          path: dist/errex-windows.zip
+
+  release:
+    name: Create GitHub Release
+    needs: [build-mac, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            errex-mac/errex-mac.dmg
+            errex-windows/errex-windows.zip

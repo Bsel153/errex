@@ -28,6 +28,7 @@ Repository = "https://github.com/Bsel153/errex"
 
 [project.optional-dependencies]
 dev = ["pytest", "pyyaml"]
+app = ["pywebview>=4.0"]
 scan = [
     "zeroconf>=0.130",
     "paho-mqtt>=2.0",
