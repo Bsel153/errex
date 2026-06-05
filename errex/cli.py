@@ -29,6 +29,71 @@ from .watch import watch_file
 from .patterns import list_patterns as _list_patterns
 
 
+def _print_tickets() -> None:
+    from .tickets import get_open_tickets, load_all
+    _sev_icons = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+    open_tickets = get_open_tickets()
+    if not open_tickets:
+        all_tickets = load_all()
+        if all_tickets:
+            output.console.print("\n  [green]✓ No open tickets.[/green]  "
+                                 f"({len(all_tickets)} closed/snoozed)\n")
+        else:
+            output.console.print("\n  [dim]No tickets yet. Run [bold]errex --scan[/bold] "
+                                 "to generate tickets from findings.[/dim]\n")
+        return
+    output.console.print(f"\n  [bold]Open Tickets[/bold] ({len(open_tickets)})\n")
+    for t in open_tickets:
+        icon = _sev_icons.get(t.severity, "•")
+        gh = f"  [dim]GH #{t.github_issue_number}[/dim]" if t.github_issue_number else ""
+        output.console.print(f"  {icon} [bold]{t.id}[/bold]  {t.title}{gh}")
+        if t.detail:
+            output.console.print(f"     [dim]{t.detail[:80]}[/dim]")
+    output.console.print(
+        f"\n  [dim]Close: errex --ticket-close ID  |  "
+        f"Snooze: errex --ticket-snooze ID[/dim]\n"
+    )
+
+
+def _ticket_action(
+    action: str,
+    ticket_id: str,
+    snooze_days: int = 7,
+    github_repo: str | None = None,
+    github_token: str | None = None,
+    discord_webhook: str | None = None,
+) -> None:
+    from .tickets import close_ticket, snooze_ticket, reopen_ticket, load_all
+    if action == "close":
+        t = close_ticket(ticket_id)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[green]✓ Closed ticket {t.id}: {t.title}[/green]")
+        if t.github_issue_number and github_repo:
+            from .github_sync import close_issue
+            resp = close_issue(t.github_issue_number, github_repo, token=github_token)
+            if "error" not in resp:
+                output.console.print(f"  [dim]GitHub Issue #{t.github_issue_number} closed.[/dim]")
+            else:
+                output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
+        if discord_webhook:
+            from .discord_notify import notify_ticket_closed
+            notify_ticket_closed(t, webhook_url=discord_webhook)
+    elif action == "snooze":
+        t = snooze_ticket(ticket_id, days=snooze_days)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[yellow]Snoozed ticket {t.id} for {snooze_days} day(s).[/yellow]")
+    elif action == "reopen":
+        t = reopen_ticket(ticket_id)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[cyan]Reopened ticket {t.id}: {t.title}[/cyan]")
+
+
 def main() -> None:
     # Two-pass: detect --profile before full parse so profile defaults can be set
     _pre = argparse.ArgumentParser(add_help=False)
@@ -103,6 +168,24 @@ def main() -> None:
                         help="compute SHA-256 of FILE and look it up on VirusTotal")
     parser.add_argument("--vt-api-key", metavar="KEY", dest="vt_api_key",
                         help="VirusTotal API key for --check-hash (or set $VIRUSTOTAL_API_KEY)")
+    # ── Ticket management ───────────────────────────────────────────────────────
+    parser.add_argument("--tickets", action="store_true",
+                        help="list open tickets")
+    parser.add_argument("--ticket-close", metavar="ID", dest="ticket_close",
+                        help="close a ticket by ID")
+    parser.add_argument("--ticket-snooze", metavar="ID", dest="ticket_snooze",
+                        help="snooze a ticket for N days (default 7, use --snooze-days to change)")
+    parser.add_argument("--snooze-days", metavar="N", dest="snooze_days", type=int, default=7,
+                        help="number of days to snooze a ticket (use with --ticket-snooze)")
+    parser.add_argument("--ticket-reopen", metavar="ID", dest="ticket_reopen",
+                        help="reopen a closed or snoozed ticket")
+    # ── Discord / GitHub integration ────────────────────────────────────────────
+    parser.add_argument("--discord-webhook", metavar="URL", dest="discord_webhook",
+                        help="Discord webhook URL for scan notifications (or set $ERREX_DISCORD_WEBHOOK)")
+    parser.add_argument("--github-token", metavar="TOKEN", dest="github_token",
+                        help="GitHub token for creating Issues (or set $GITHUB_TOKEN)")
+    parser.add_argument("--github-repo", metavar="OWNER/REPO", dest="github_repo",
+                        help="GitHub repo to create Issues in (e.g. myorg/myrepo)")
     parser.add_argument("--verify", action="store_true",
                         help="after --scan-fix or --fix-apply, re-run to confirm the fix worked")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
@@ -311,6 +394,26 @@ def main() -> None:
         print_scan_status()
         return
 
+    if getattr(args, "tickets", False):
+        _print_tickets()
+        return
+
+    if getattr(args, "ticket_close", None):
+        _ticket_action("close", args.ticket_close,
+                       github_repo=getattr(args, "github_repo", None),
+                       github_token=getattr(args, "github_token", None),
+                       discord_webhook=getattr(args, "discord_webhook", None))
+        return
+
+    if getattr(args, "ticket_snooze", None):
+        _ticket_action("snooze", args.ticket_snooze,
+                       snooze_days=getattr(args, "snooze_days", 7))
+        return
+
+    if getattr(args, "ticket_reopen", None):
+        _ticket_action("reopen", args.ticket_reopen)
+        return
+
     # First-run scan (once only, no API key needed)
     _skip_first_scan = (
         args.scan or args.setup
@@ -320,6 +423,10 @@ def main() -> None:
         or getattr(args, "check_hash", None)
         or getattr(args, "email_report", None)
         or getattr(args, "report_preview", False)
+        or getattr(args, "tickets", False)
+        or getattr(args, "ticket_close", None)
+        or getattr(args, "ticket_snooze", None)
+        or getattr(args, "ticket_reopen", None)
         or args.history is not None or args.stats
         or args.list_profiles or args.completion or args.doctor
     )
@@ -741,6 +848,51 @@ def main() -> None:
                 output.console.print(f"[yellow]⚠ Still present:[/yellow] {', '.join(vr['still_present'])}")
             if vr["new_issues"]:
                 output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
+
+        # ── Ticket + GitHub + Discord integration ──────────────────────────────
+        _gh_repo    = getattr(args, "github_repo", None)
+        _gh_token   = getattr(args, "github_token", None)
+        _disc_hook  = getattr(args, "discord_webhook", None)
+        if result.findings and (_gh_repo or _disc_hook):
+            from .tickets import create_ticket, find_by_finding_id
+            from .discord_notify import notify_new_ticket, notify_scan_summary
+            if _gh_repo:
+                from .github_sync import create_issue
+            new_tickets = 0
+            for finding in result.findings:
+                if finding.severity not in ("critical", "high", "medium"):
+                    continue
+                if find_by_finding_id(finding.id):
+                    continue  # already ticketed
+                ticket = create_ticket(
+                    title=finding.title,
+                    severity=finding.severity,
+                    detail=finding.detail,
+                    source="scan",
+                    finding_id=finding.id,
+                )
+                new_tickets += 1
+                gh_issue_url = None
+                if _gh_repo:
+                    resp = create_issue(ticket, _gh_repo, token=_gh_token)
+                    if "number" in resp:
+                        from .tickets import update_ticket
+                        update_ticket(ticket.id, github_issue_number=resp["number"])
+                        owner_repo = _gh_repo
+                        gh_issue_url = f"https://github.com/{owner_repo}/issues/{resp['number']}"
+                        output.console.print(
+                            f"  [dim]GitHub Issue #{resp['number']} opened → {gh_issue_url}[/dim]"
+                        )
+                    elif "error" in resp:
+                        output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
+                if _disc_hook:
+                    notify_new_ticket(ticket, webhook_url=_disc_hook, github_issue_url=gh_issue_url)
+            if _disc_hook:
+                open_tickets = len([f for f in result.findings if f.severity in ("critical","high","medium")])
+                crit_count   = sum(1 for f in result.findings if f.severity in ("critical","high"))
+                notify_scan_summary(open_tickets, crit_count, new_tickets, webhook_url=_disc_hook)
+            if new_tickets:
+                output.console.print(f"\n  [cyan]{new_tickets} new ticket(s) created.[/cyan] Run [bold]errex --tickets[/bold] to view.\n")
         return
 
     if getattr(args, "scan_malware", None):
