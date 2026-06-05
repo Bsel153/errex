@@ -816,6 +816,7 @@ def main() -> None:
                     output.console.print("\n")
 
         # Batch fix by severity
+        _auto_fixed_ids: set[str] = set()
         if args.scan_fix:
             fixable_findings = [f for f in result.findings if f.is_fixable()]
             if not fixable_findings:
@@ -838,6 +839,8 @@ def main() -> None:
                         for r in fix_results:
                             mark = "[green]✔[/green]" if r.success else "[red]✗[/red]"
                             output.console.print(f"  {mark} {r.message}")
+                            if r.success:
+                                _auto_fixed_ids.add(r.finding_id)
         if args.verify:
             from .scan import verify_scan
             output.console.print("\n[bold]Verifying fixes...[/bold]")
@@ -862,8 +865,11 @@ def main() -> None:
             for finding in result.findings:
                 if finding.severity not in ("critical", "high", "medium"):
                     continue
-                if find_by_finding_id(finding.id):
-                    continue  # already ticketed
+                if finding.id in _auto_fixed_ids:
+                    continue  # successfully auto-fixed this run — don't open a ticket
+                existing = find_by_finding_id(finding.id)
+                if existing and existing.effective_status() in ("open", "snoozed"):
+                    continue  # active ticket exists; skip (closed tickets allow re-ticketing)
                 ticket = create_ticket(
                     title=finding.title,
                     severity=finding.severity,
@@ -888,8 +894,10 @@ def main() -> None:
                 if _disc_hook:
                     notify_new_ticket(ticket, webhook_url=_disc_hook, github_issue_url=gh_issue_url)
             if _disc_hook:
-                open_tickets = len([f for f in result.findings if f.severity in ("critical","high","medium")])
-                crit_count   = sum(1 for f in result.findings if f.severity in ("critical","high"))
+                from .tickets import get_open_tickets
+                _open = get_open_tickets()
+                open_tickets = len(_open)
+                crit_count   = sum(1 for t in _open if t.severity == "critical")
                 notify_scan_summary(open_tickets, crit_count, new_tickets, webhook_url=_disc_hook)
             if new_tickets:
                 output.console.print(f"\n  [cyan]{new_tickets} new ticket(s) created.[/cyan] Run [bold]errex --tickets[/bold] to view.\n")

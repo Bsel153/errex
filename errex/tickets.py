@@ -101,10 +101,10 @@ def load_all() -> list[Ticket]:
             for line in f:
                 try:
                     tickets.append(Ticket(json.loads(line)))
-                except Exception:
+                except (json.JSONDecodeError, ValueError, KeyError):
                     continue
-    except Exception:
-        pass
+    except FileNotFoundError:
+        pass  # removed between exists() check and open()
     return tickets
 
 
