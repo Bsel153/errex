@@ -196,6 +196,8 @@ def main() -> None:
     parser.add_argument("--tokens", action="store_true", help="show token usage after each explanation")
     parser.add_argument("--notify", action="store_true", help="send a desktop notification when the explanation is ready")
     parser.add_argument("--update", action="store_true", help="check for a newer version of errex")
+    parser.add_argument("--create-shortcut", action="store_true", dest="create_shortcut",
+                        help="create a desktop shortcut that opens the errex web UI")
     parser.add_argument("--explain-code", metavar="FILE", dest="explain_code", help="explain what a piece of code does")
     parser.add_argument("--issues", action="store_true", help="search GitHub Issues for similar errors after explaining")
     parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
@@ -429,6 +431,7 @@ def main() -> None:
         or getattr(args, "ticket_close", None)
         or getattr(args, "ticket_snooze", None)
         or getattr(args, "ticket_reopen", None)
+        or getattr(args, "create_shortcut", False)
         or args.history is not None or args.stats
         or args.list_profiles or args.completion or args.doctor
     )
@@ -738,6 +741,11 @@ def main() -> None:
 
     if args.update:
         check_for_update()
+        return
+
+    if getattr(args, "create_shortcut", False):
+        from .launcher import run_create_shortcut
+        run_create_shortcut()
         return
 
     if args.setup:
