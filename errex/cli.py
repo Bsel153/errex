@@ -96,6 +96,13 @@ def main() -> None:
                         help="prompt to apply safe fixes after scanning (use with --scan)")
     parser.add_argument("--scan-no-explain", action="store_true", dest="scan_no_explain",
                         help="skip Claude explanations in --scan (faster, no API key needed)")
+    parser.add_argument("--scan-malware", nargs="?", const="~", metavar="PATH",
+                        dest="scan_malware",
+                        help="run malware scan (heuristics + ClamAV if installed) on PATH (default: home dir)")
+    parser.add_argument("--check-hash", metavar="FILE", dest="check_hash",
+                        help="compute SHA-256 of FILE and look it up on VirusTotal")
+    parser.add_argument("--vt-api-key", metavar="KEY", dest="vt_api_key",
+                        help="VirusTotal API key for --check-hash (or set $VIRUSTOTAL_API_KEY)")
     parser.add_argument("--verify", action="store_true",
                         help="after --scan-fix or --fix-apply, re-run to confirm the fix worked")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
@@ -730,6 +737,52 @@ def main() -> None:
                 output.console.print(f"[yellow]⚠ Still present:[/yellow] {', '.join(vr['still_present'])}")
             if vr["new_issues"]:
                 output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
+        return
+
+    if getattr(args, "scan_malware", None):
+        from pathlib import Path as _Path
+        from .scan import run_malware_scan
+        from .scanners._base import SEVERITIES as _SEV
+        _mpath = args.scan_malware
+        if _mpath == "~":
+            _mpath = str(_Path.home())
+        output.console.print(f"\n[bold]Malware scan:[/bold] {_mpath}\n")
+        _sev_icons = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+        def _mscan_progress(name, done, total):
+            output.console.print(f"  [dim]checking {name}…[/dim]", end="\r")
+        _mresult = run_malware_scan(path=_mpath, progress_cb=_mscan_progress)
+        output.console.print(" " * 60, end="\r")  # clear progress line
+        if not _mresult.findings:
+            output.console.print("  [green]✓ No malware indicators found.[/green]\n")
+        else:
+            for _f in sorted(_mresult.findings, key=lambda x: x.severity_rank()):
+                _icon = _sev_icons.get(_f.severity, "•")
+                output.console.print(f"  {_icon} [{_f.severity.upper()}] {_f.title}")
+                if _f.detail:
+                    for _line in _f.detail.splitlines()[:5]:
+                        output.console.print(f"      [dim]{_line}[/dim]")
+                if _f.fix_cmd:
+                    output.console.print(f"      [cyan]Fix:[/cyan] {_f.fix_cmd}")
+                output.console.print()
+        return
+
+    if getattr(args, "check_hash", None):
+        from .scanners.virustotal import check_file, format_result
+        _vt_key = getattr(args, "vt_api_key", None)
+        output.console.print(f"\n[bold]VirusTotal hash check:[/bold] {args.check_hash}\n")
+        _vt_result = check_file(args.check_hash, api_key=_vt_key)
+        _summary = format_result(_vt_result)
+        if "MALICIOUS" in _summary:
+            output.console.print(f"  [red]{_summary}[/red]")
+        elif "SUSPICIOUS" in _summary:
+            output.console.print(f"  [yellow]{_summary}[/yellow]")
+        elif "CLEAN" in _summary:
+            output.console.print(f"  [green]{_summary}[/green]")
+        else:
+            output.console.print(f"  [dim]{_summary}[/dim]")
+        if "link" in _vt_result:
+            output.console.print(f"\n  Full report: {_vt_result['link']}")
+        output.console.print()
         return
 
     if args.export:

@@ -61,8 +61,9 @@ def run_scan(
         from .scanners import linux
         checks.extend(linux.get_checks())
 
-    from .scanners import cve
+    from .scanners import cve, malware
     checks.append(("Python Package CVEs", cve.check_python_packages))
+    checks.extend(malware.get_checks())
 
     findings: list[Finding] = []
     total = len(checks) + (1 if network else 0)
@@ -182,6 +183,37 @@ def auto_fix(
                 results.append(FixResult(finding.id, False, str(exc)))
 
     return results
+
+
+def run_malware_scan(
+    path: str | None = None,
+    progress_cb: Callable[[str, int, int], None] | None = None,
+) -> ScanResult:
+    """Run heuristic + ClamAV malware checks on *path* (defaults to home dir)."""
+    import datetime
+    from pathlib import Path
+    from .scanners import malware, clamav
+
+    started_at = datetime.datetime.utcnow().isoformat() + "Z"
+    scan_path = path or str(Path.home())
+
+    checks: list[tuple[str, Callable[[], Finding | None]]] = []
+    checks.extend(malware.get_checks())
+    checks.extend(clamav.get_checks(path=scan_path))
+
+    findings: list[Finding] = []
+    total = len(checks)
+    for i, (name, fn) in enumerate(checks):
+        if progress_cb:
+            progress_cb(name, i, total)
+        try:
+            result = fn()
+            if result is not None:
+                findings.append(result)
+        except Exception:
+            pass
+
+    return ScanResult(platform="cross", started_at=started_at, findings=findings)
 
 
 def verify_scan(
