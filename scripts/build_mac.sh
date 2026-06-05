@@ -12,7 +12,8 @@ echo "  ────────────────────────
 
 # Install build deps
 echo "  Installing build dependencies…"
-pip install --quiet pyinstaller pywebview
+PIP=$(command -v pip3 || command -v pip)
+$PIP install --quiet pyinstaller pywebview
 
 # Clean previous build
 rm -rf dist/errex.app dist/errex build/errex
