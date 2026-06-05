@@ -400,9 +400,11 @@ def main() -> None:
 
     if getattr(args, "ticket_close", None):
         _ticket_action("close", args.ticket_close,
-                       github_repo=getattr(args, "github_repo", None),
-                       github_token=getattr(args, "github_token", None),
-                       discord_webhook=getattr(args, "discord_webhook", None))
+                       github_repo=getattr(args, "github_repo", None) or config.get("github_repo"),
+                       github_token=getattr(args, "github_token", None) or config.get("github_token"),
+                       discord_webhook=(getattr(args, "discord_webhook", None)
+                                        or config.get("discord_webhook")
+                                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK")))
         return
 
     if getattr(args, "ticket_snooze", None):
@@ -853,9 +855,12 @@ def main() -> None:
                 output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
 
         # ── Ticket + GitHub + Discord integration ──────────────────────────────
-        _gh_repo    = getattr(args, "github_repo", None)
-        _gh_token   = getattr(args, "github_token", None)
-        _disc_hook  = getattr(args, "discord_webhook", None)
+        # Flags take priority; fall back to config file, then env vars
+        _gh_repo    = getattr(args, "github_repo", None)  or config.get("github_repo")
+        _gh_token   = getattr(args, "github_token", None) or config.get("github_token")
+        _disc_hook  = (getattr(args, "discord_webhook", None)
+                       or config.get("discord_webhook")
+                       or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK"))
         if result.findings and (_gh_repo or _disc_hook):
             from .tickets import create_ticket, find_by_finding_id
             from .discord_notify import notify_new_ticket, notify_scan_summary
