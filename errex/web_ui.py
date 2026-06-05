@@ -21,6 +21,128 @@ from . import _constants
 from .patterns import match_pattern
 
 _HISTORY_FILE = Path.home() / ".errex_history"
+_CONFIG_FILE = Path.home() / ".errex.json"
+
+# ─── Setup page ───────────────────────────────────────────────────────────────
+
+_SETUP_HTML = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>errex — Setup</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#151515;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+    .card{background:#1f1f1f;border:1px solid #333;border-radius:14px;padding:44px;max-width:480px;width:100%}
+    .logo{color:#EE0000;font-size:2.2rem;font-weight:700;letter-spacing:-1px;margin-bottom:6px}
+    .tagline{color:#8a8d90;font-size:14px;margin-bottom:36px}
+    label{display:block;font-size:13px;color:#aaa;margin-bottom:6px;font-weight:500}
+    .field{margin-bottom:20px}
+    input{width:100%;background:#111;border:1px solid #444;border-radius:7px;color:#e0e0e0;
+          padding:11px 14px;font-size:14px;font-family:monospace;transition:border-color .15s}
+    input:focus{outline:none;border-color:#EE0000}
+    .optional{color:#555;font-size:11px;font-weight:400;margin-left:6px}
+    button{background:#EE0000;color:#fff;border:none;border-radius:7px;padding:13px 24px;
+           font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:4px;transition:background .15s}
+    button:hover{background:#cc0000}
+    button:disabled{background:#555;cursor:not-allowed}
+    .hint{font-size:12px;color:#555;margin-top:20px;text-align:center;line-height:1.7}
+    .hint a{color:#EE0000;text-decoration:none}
+    .hint a:hover{text-decoration:underline}
+    .error{color:#ff6b6b;font-size:13px;margin-bottom:14px;padding:10px;background:#2a1515;
+           border-radius:6px;border-left:3px solid #EE0000;display:none}
+    .divider{border:none;border-top:1px solid #2a2a2a;margin:24px 0}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">errex</div>
+    <div class="tagline">Error explainer &amp; security scanner</div>
+
+    <div class="error" id="err"></div>
+
+    <div class="field">
+      <label>Anthropic API Key</label>
+      <input type="password" id="api-key" placeholder="sk-ant-api03-..." autocomplete="off" />
+    </div>
+
+    <hr class="divider">
+
+    <div class="field">
+      <label>errex Pro License Key <span class="optional">(optional)</span></label>
+      <input type="text" id="license-key" placeholder="ERREX-PRO-XXXXXX-XXXXXXXX" autocomplete="off" />
+    </div>
+
+    <button id="btn" onclick="setup()">Get Started &rarr;</button>
+
+    <div class="hint">
+      Get a free Anthropic API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
+      Get errex Pro at <a href="https://errex.dev/pro" target="_blank">errex.dev/pro</a>
+    </div>
+  </div>
+  <script>
+    document.getElementById('api-key').focus();
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') setup(); });
+
+    async function setup() {
+      const apiKey = document.getElementById('api-key').value.trim();
+      const licKey = document.getElementById('license-key').value.trim();
+      const errEl  = document.getElementById('err');
+      const btn    = document.getElementById('btn');
+
+      errEl.style.display = 'none';
+      if (!apiKey) { show('Please enter your Anthropic API key.'); return; }
+      if (!apiKey.startsWith('sk-')) { show('That doesn\\'t look like an Anthropic API key (should start with sk-).'); return; }
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/setup', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({api_key: apiKey, license_key: licKey})
+        });
+        const d = await r.json();
+        if (d.ok) { window.location.href = '/'; }
+        else { show(d.error || 'Setup failed — please try again.'); btn.disabled=false; btn.textContent='Get Started →'; }
+      } catch(e) { show('Could not connect. Is errex running?'); btn.disabled=false; btn.textContent='Get Started →'; }
+    }
+
+    function show(msg) {
+      const el = document.getElementById('err');
+      el.textContent = msg; el.style.display = 'block';
+    }
+  </script>
+</body>
+</html>'''
+
+
+def _load_config() -> dict:
+    try:
+        return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_config(data: dict) -> None:
+    _CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _needs_setup() -> bool:
+    """Return True if no API key is configured anywhere."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    return not bool(_load_config().get("anthropic_api_key"))
+
+
+def _load_api_key_from_config() -> None:
+    """Load saved API key from config into env if not already set."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        key = _load_config().get("anthropic_api_key", "")
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
+
 
 # ─── HTML ─────────────────────────────────────────────────────────────────────
 
@@ -672,6 +794,17 @@ class Handler(BaseHTTPRequestHandler):
 
         path = urlparse(self.path).path
 
+        # First-run setup redirect
+        if _needs_setup() and path not in ("/setup", "/api/setup"):
+            self.send_response(302)
+            self.send_header("Location", "/setup")
+            self.end_headers()
+            return
+
+        if path == "/setup":
+            self._html(_SETUP_HTML)
+            return
+
         if path == "/api/license":
             from .license import get_license, is_pro
             info = get_license()
@@ -733,6 +866,26 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = urlparse(self.path).path
+
+        if path == "/api/setup":
+            length = min(int(self.headers.get("Content-Length", 0)), 4096)
+            body = json.loads(self.rfile.read(length))
+            api_key = body.get("api_key", "").strip()
+            license_key = body.get("license_key", "").strip()
+            if not api_key or not api_key.startswith("sk-"):
+                self._json({"ok": False, "error": "Invalid API key format."})
+                return
+            config = _load_config()
+            config["anthropic_api_key"] = api_key
+            if license_key:
+                from .license import activate
+                result = activate(license_key)
+                if result["success"]:
+                    config["license_key"] = license_key.upper()
+            _save_config(config)
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+            self._json({"ok": True})
+            return
 
         if path == "/scan":
             self._handle_scan()
@@ -1023,6 +1176,7 @@ def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
     tls=True     — wrap in HTTPS using an auto-generated self-signed cert
     cert/key     — paths to an existing cert/key (implies tls=True)
     """
+    _load_api_key_from_config()
     import ssl as _ssl
     token = base64.b64encode(auth.encode()).decode() if auth else None
     if tunnel and not auth:
