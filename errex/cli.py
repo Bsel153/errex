@@ -373,6 +373,8 @@ def main() -> None:
                         help="product version for the ticket")
     parser.add_argument("--mcp", action="store_true",
                         help="start MCP server for Claude Desktop integration (communicates over stdio)")
+    parser.add_argument("--activate", metavar="KEY", help="Activate an errex Pro license key")
+    parser.add_argument("--license", action="store_true", help="Show license status")
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -450,6 +452,22 @@ def main() -> None:
 
     if args.ci:
         args.terse = True
+
+    if args.activate:
+        from .license import activate
+        result = activate(args.activate)
+        if result["success"]:
+            output.console.print(f"\n[green]✓ errex {result['tier'].capitalize()} activated![/green] "
+                                 f"Valid until {result['expiry'][:4]}/{result['expiry'][4:]}\n")
+        else:
+            output.console.print(f"\n[red]✗[/red] {result['error']}\n")
+            raise SystemExit(1)
+        return
+
+    if getattr(args, "license", False):
+        from .license import show_license_status
+        show_license_status()
+        return
 
     if args.privacy:
         from .security import get_privacy_text
@@ -753,6 +771,8 @@ def main() -> None:
         return
 
     if args.scan:
+        from .license import require_pro
+        require_pro("scan")
         import json as _json
         import os as _os
         from .scan import run_scan, explain_findings, auto_fix, detect_platform
@@ -968,6 +988,8 @@ def main() -> None:
         return
 
     if args.explain_diff is not None:
+        from .license import require_pro
+        require_pro("explain_diff")
         if args.explain_diff == "-" or args.explain_diff is True:
             if not sys.stdin.isatty():
                 diff_text = sys.stdin.read().strip()
@@ -990,6 +1012,8 @@ def main() -> None:
         return
 
     if args.test_gen:
+        from .license import require_pro
+        require_pro("test_gen")
         error_text_for_test = None
         if not sys.stdin.isatty():
             error_text_for_test = sys.stdin.read().strip() or None
@@ -1016,6 +1040,8 @@ def main() -> None:
         return
 
     if args.explain_code:
+        from .license import require_pro
+        require_pro("explain_code")
         explain_code(
             args.explain_code,
             model=args.model,

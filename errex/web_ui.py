@@ -250,6 +250,7 @@ HTML = r"""<!DOCTYPE html>
   <header class="hdr">
     <h1>errex</h1>
     <span class="sub">paste any error · get a plain-English explanation</span>
+    <span id="license-badge"></span>
     <a href="/privacy" target="_blank" style="margin-left:auto;font-size:0.72rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:0.18rem 0.5rem;" title="Privacy policy — what errex sees and stores">🔒 Privacy</a>
     <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">🌙</button>
   </header>
@@ -587,6 +588,12 @@ HTML = r"""<!DOCTYPE html>
 
   loadHist();
 
+  fetch('/api/license').then(r=>r.json()).then(d=>{
+    const b = document.getElementById('license-badge');
+    if(d.pro) b.innerHTML='<span style="background:#3d9970;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-right:8px">PRO</span>';
+    else b.innerHTML='<a href="https://errex.dev/pro" target="_blank" style="color:#EE0000;font-size:11px;margin-right:8px">Upgrade to Pro</a>';
+  }).catch(()=>{});
+
   function toggleTheme() {
     var current = document.documentElement.getAttribute('data-theme') || 'dark';
     var next = current === 'dark' ? 'light' : 'dark';
@@ -664,6 +671,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         path = urlparse(self.path).path
+
+        if path == "/api/license":
+            from .license import get_license, is_pro
+            info = get_license()
+            self._json({"pro": is_pro(), "info": info})
+            return
 
         if path == "/stats":
             self._json(_compute_stats())

@@ -301,3 +301,18 @@ def test_digest_no_history_message(tmp_path):
 def test_digest_since_flag_accepted(tmp_path):
     r = run(["--digest", "--digest-since", "48"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
     assert r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# License flags
+# ---------------------------------------------------------------------------
+
+def test_license_flag_exits_zero(tmp_path):
+    r = run(["--license"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+
+
+def test_activate_invalid_key_exits_nonzero(tmp_path):
+    r = run(["--activate", "ERREX-PRO-000000-AAAAAAAA"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode != 0
