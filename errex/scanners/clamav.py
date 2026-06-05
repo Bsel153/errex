@@ -66,8 +66,10 @@ def _install_hint() -> str:
     return "apt/dnf/brew install clamav && freshclam"
 
 
-def scan_path(path: str = str(Path.home())) -> Finding | None:
+def scan_path(path: str | None = None) -> Finding | None:
     """Run clamscan on *path* and return a Finding if infected files are detected."""
+    if path is None:
+        path = str(Path.home())
     if not _clamscan_available():
         return check_clamav_installed()
 
@@ -84,10 +86,21 @@ def scan_path(path: str = str(Path.home())) -> Finding | None:
             explanation="clamscan exited with an error. Check that virus definitions are up to date (run freshclam).",
         )
 
-    # rc == 0: clean, rc == 1: infected, rc == 2: scan error
     if rc == 0:
         return None  # clean
 
+    if rc == 2:
+        return Finding(
+            id="clamav-error",
+            severity="info",
+            category="error",
+            platform="cross",
+            title="ClamAV scan error (rc=2)",
+            detail=output[:500] or "clamscan returned exit code 2 (scan engine error).",
+            explanation="clamscan hit an internal error — usually a corrupt or outdated database. Run `freshclam` to update definitions.",
+        )
+
+    # rc == 1: infected files found
     infected_lines = [l for l in output.splitlines() if "FOUND" in l]
     count = len(infected_lines)
 

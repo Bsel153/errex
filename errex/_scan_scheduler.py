@@ -89,7 +89,7 @@ def print_scan_status() -> None:
     ts = last.get("timestamp", "unknown")
     count = last.get("finding_count", 0)
     sevs = last.get("severities", {})
+    sev_str = ", ".join(f"{v} {k}" for k, v in sevs.items()) if sevs else "none"
     console.print(f"\n[bold]Last scan:[/bold] {ts}")
-    console.print(f"[bold]Findings:[/bold] {count} total — " +
-                  ", ".join(f"{v} {k}" for k, v in sevs.items()) if sevs else "none")
+    console.print(f"[bold]Findings:[/bold] {count} total — {sev_str}")
     console.print()

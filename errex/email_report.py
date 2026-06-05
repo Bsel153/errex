@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+import html as _html
 import json
 import smtplib
 import ssl
@@ -60,9 +61,9 @@ def build_html_report(
     # Findings HTML
     findings_html = ""
     for f in scan_findings[:15]:  # cap at 15
-        sev = f.get("severity", "info")
-        title = f.get("title", "Unknown")
-        detail = f.get("detail", "")[:120]
+        sev = _html.escape(f.get("severity", "info"))
+        title = _html.escape(f.get("title", "Unknown"))
+        detail = _html.escape(f.get("detail", "")[:120])
         is_fixed = f.get("id") in {x.get("id") for x in fixed_findings}
         badge = '<span class="fixed-badge">&#10003; Fixed</span>' if is_fixed else ""
         findings_html += f'<div class="finding {sev}"><div class="title">{title}{badge}</div><div class="detail">{detail}</div></div>\n'
@@ -139,13 +140,14 @@ def gather_report_data(period: str = "weekly") -> dict:
     fixed_path = Path.home() / ".errex_fixes.jsonl"
     fixed_findings: list[dict] = []
     if fixed_path.exists():
-        cutoff_ts = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat()
+        cutoff_dt = datetime.datetime.utcnow() - datetime.timedelta(days=days)
         try:
-            with open(fixed_path) as f:
+            with open(fixed_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     try:
                         entry = json.loads(line)
-                        if entry.get("timestamp", "") >= cutoff_ts:
+                        ts = entry.get("timestamp", "")
+                        if ts and datetime.datetime.fromisoformat(ts.rstrip("Z")) >= cutoff_dt:
                             fixed_findings.append(entry)
                     except Exception:
                         continue
@@ -190,12 +192,19 @@ def send_email_report(
     msg.attach(MIMEText(html, "html"))
 
     ctx = ssl.create_default_context() if use_tls else None
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        if use_tls:
-            server.starttls(context=ctx)
-        if smtp_user:
-            server.login(smtp_user, smtp_password)
-        server.sendmail(from_addr, to_addr, msg.as_string())
+    # Port 465 uses implicit TLS (SMTP_SSL); all others use STARTTLS.
+    if use_tls and smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, context=ctx) as server:
+            if smtp_user:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(from_addr, to_addr, msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            if use_tls:
+                server.starttls(context=ctx)
+            if smtp_user:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(from_addr, to_addr, msg.as_string())
 
 
 def print_report(period: str = "weekly", output_file: str | None = None) -> None:

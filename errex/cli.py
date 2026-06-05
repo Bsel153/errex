@@ -316,6 +316,10 @@ def main() -> None:
         args.scan or args.setup
         or getattr(args, "scan_schedule", None)
         or getattr(args, "scan_status", False)
+        or getattr(args, "scan_malware", None)
+        or getattr(args, "check_hash", None)
+        or getattr(args, "email_report", None)
+        or getattr(args, "report_preview", False)
         or args.history is not None or args.stats
         or args.list_profiles or args.completion or args.doctor
     )

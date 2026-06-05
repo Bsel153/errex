@@ -126,7 +126,7 @@ def run_doctor(offline: bool = False) -> None:
         ok = False
 
     # 2. Live API ping
-    if api_key:
+    if api_key and not offline:
         try:
             client = anthropic.Anthropic(api_key=api_key, timeout=_constants.API_TIMEOUT)
             msg = client.messages.create(
@@ -153,7 +153,7 @@ def run_doctor(offline: bool = False) -> None:
 
     # 4. History file
     if HISTORY_FILE.exists():
-        with open(HISTORY_FILE) as f:
+        with open(HISTORY_FILE, encoding="utf-8", errors="replace") as f:
             count = sum(1 for line in f if line.strip())
         output.console.print(f"[green]✓[/green] History file OK ({count} entries at {HISTORY_FILE})")
     else:
