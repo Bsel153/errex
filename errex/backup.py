@@ -13,6 +13,16 @@ from pathlib import Path
 _BACKUP_ROOT = Path.home() / ".errex_backups"
 _MANIFEST = _BACKUP_ROOT / "manifest.jsonl"
 
+# Local folders created by desktop sync clients — if one of these exists,
+# the provider is already syncing it to the cloud; errex just needs to drop
+# a copy inside. No OAuth, no API keys, no extra moving parts.
+_CLOUD_SYNC_FOLDERS = {
+    "Google Drive":  ("Google Drive", "GoogleDrive", "My Drive"),
+    "iCloud Drive":  ("Library/Mobile Documents/com~apple~CloudDocs",),
+    "Dropbox":       ("Dropbox",),
+    "OneDrive":      ("OneDrive",),
+}
+
 
 def _now_stamp() -> str:
     return datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%S")
@@ -58,6 +68,51 @@ def backup_files(paths: list[str], reason: str = "") -> list[dict]:
         _record(record)
         records.append(record)
     return records
+
+
+def detect_cloud_sync_folders() -> list[dict]:
+    """
+    Find cloud-sync desktop-client folders already on this machine
+    (Google Drive, iCloud Drive, Dropbox, OneDrive).
+
+    Returns a list of {"provider": ..., "path": ...} for each folder found.
+    Detection only — never copies anything until the customer opts in.
+    """
+    home = Path.home()
+    found = []
+    for provider, candidates in _CLOUD_SYNC_FOLDERS.items():
+        for rel in candidates:
+            path = home / rel
+            if path.is_dir():
+                found.append({"provider": provider, "path": str(path)})
+                break
+    return found
+
+
+def sync_to_cloud_folder(provider_path: str) -> dict:
+    """
+    Copy the local backup folder into a detected cloud-sync folder
+    (e.g. ~/Google Drive/errex_backups). The sync client takes it from there.
+    """
+    if not _BACKUP_ROOT.is_dir():
+        return {"error": "No local backups to sync yet."}
+    dest_root = Path(provider_path).expanduser()
+    if not dest_root.is_dir():
+        return {"error": f"Cloud sync folder not found: {dest_root}"}
+    dest = dest_root / "errex_backups"
+    try:
+        for item in _BACKUP_ROOT.iterdir():
+            if item.name == "manifest.jsonl":
+                continue
+            target = dest / item.name
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+    except OSError as e:
+        return {"error": str(e)}
+    return {"ok": True, "synced_to": str(dest)}
 
 
 def list_backups(limit: int = 20) -> list[dict]:

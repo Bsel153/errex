@@ -190,6 +190,17 @@ def test_backups_no_backups_yet(tmp_path):
     assert "No auto-fix backups" in r.stdout
 
 
+def test_cloud_backup_no_folders_detected(tmp_path):
+    r = run(["--cloud-backup"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+    assert "No cloud-sync folders detected" in r.stdout
+
+
+def test_restore_point_flag_accepted(tmp_path):
+    r = run(["--restore-point"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+
+
 def test_restore_backup_unknown_path(tmp_path):
     r = run(["--restore-backup", "/no/such/backup.txt"],
             env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})

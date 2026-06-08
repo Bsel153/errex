@@ -136,3 +136,58 @@ def test_restore_backup_missing_backup_file(tmp_path, monkeypatch):
     os.remove(rec["backup"])
     resp = B.restore_backup(rec["backup"])
     assert "error" in resp
+
+
+class TestCloudSyncFolders:
+    def _patch_home(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(B.Path, "home", staticmethod(lambda: tmp_path))
+        return tmp_path
+
+    def test_detects_no_folders(self, tmp_path, monkeypatch):
+        self._patch_home(tmp_path, monkeypatch)
+        assert B.detect_cloud_sync_folders() == []
+
+    def test_detects_google_drive(self, tmp_path, monkeypatch):
+        home = self._patch_home(tmp_path, monkeypatch)
+        (home / "Google Drive").mkdir()
+        found = B.detect_cloud_sync_folders()
+        assert len(found) == 1
+        assert found[0]["provider"] == "Google Drive"
+
+    def test_detects_multiple_providers(self, tmp_path, monkeypatch):
+        home = self._patch_home(tmp_path, monkeypatch)
+        (home / "Dropbox").mkdir()
+        (home / "OneDrive").mkdir()
+        found = B.detect_cloud_sync_folders()
+        providers = {f["provider"] for f in found}
+        assert providers == {"Dropbox", "OneDrive"}
+
+    def test_sync_to_cloud_folder_no_local_backups(self, tmp_path, monkeypatch):
+        _patch_root(tmp_path, monkeypatch)
+        dest = tmp_path / "Dropbox"
+        dest.mkdir()
+        resp = B.sync_to_cloud_folder(str(dest))
+        assert "error" in resp
+
+    def test_sync_to_cloud_folder_missing_dest(self, tmp_path, monkeypatch):
+        root = _patch_root(tmp_path, monkeypatch)
+        root.mkdir(parents=True)
+        resp = B.sync_to_cloud_folder(str(tmp_path / "NoSuchFolder"))
+        assert "error" in resp
+
+    def test_sync_to_cloud_folder_copies_backups(self, tmp_path, monkeypatch):
+        _patch_root(tmp_path, monkeypatch)
+        src = tmp_path / "config.txt"
+        src.write_text("hello")
+        B.backup_files([str(src)])
+
+        dest = tmp_path / "Dropbox"
+        dest.mkdir()
+        resp = B.sync_to_cloud_folder(str(dest))
+
+        assert resp.get("ok") is True
+        synced = dest / "errex_backups"
+        assert synced.is_dir()
+        copied_files = list(synced.rglob("config.txt"))
+        assert len(copied_files) == 1
+        assert copied_files[0].read_text() == "hello"

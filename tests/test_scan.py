@@ -594,6 +594,11 @@ class TestScanCLI:
         result = self._run(["--scan", "--scan-no-explain", "--scan-speak"], tmp_path)
         assert result.returncode == 0
 
+    def test_scan_mascot_flag_accepted(self, tmp_path):
+        result = self._run(["--scan", "--scan-no-explain", "--mascot"], tmp_path)
+        assert result.returncode == 0
+        assert "(•‿•)" in result.stdout
+
     def test_scan_help_mentioned(self):
         result = self._run(["--help"])
         assert "scan" in result.stdout.lower()

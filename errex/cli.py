@@ -176,6 +176,8 @@ def main() -> None:
                         help="read the scan summary aloud using your OS's text-to-speech (accessibility; use with --scan)")
     parser.add_argument("--simple", action="store_true", dest="simple_mode",
                         help="stripped-down output — short titles only, no detail/explanations/icons (accessibility)")
+    parser.add_argument("--mascot", action="store_true", dest="mascot",
+                        help="have Rex (errex's mascot) deliver your scan results with a bit of personality")
     parser.add_argument("--scan-malware", nargs="?", const="~", metavar="PATH",
                         dest="scan_malware",
                         help="run malware scan (heuristics + ClamAV if installed) on PATH (default: home dir)")
@@ -208,6 +210,10 @@ def main() -> None:
                         help="list recent auto-fix backups (files errex copied before modifying them)")
     parser.add_argument("--restore-backup", metavar="PATH", dest="restore_backup",
                         help="restore a backed-up file to its original location (path from --backups)")
+    parser.add_argument("--cloud-backup", action="store_true", dest="cloud_backup",
+                        help="copy errex backups into a detected cloud-sync folder (Google Drive, iCloud, Dropbox, OneDrive)")
+    parser.add_argument("--restore-point", action="store_true", dest="restore_point",
+                        help="ask your OS to take a system restore point / local snapshot (Time Machine, System Restore, timeshift) before making risky changes")
     # ── Discord / GitHub integration ────────────────────────────────────────────
     parser.add_argument("--discord-webhook", metavar="URL", dest="discord_webhook",
                         help="Discord webhook URL for scan notifications (or set $ERREX_DISCORD_WEBHOOK)")
@@ -498,6 +504,51 @@ def main() -> None:
         output.console.print(f"[green]✓ {args.device_rename} is now called \"{nickname}\"[/green]")
         return
 
+    if getattr(args, "restore_point", False):
+        from .restore_points import create_restore_point, is_supported
+        if not is_supported():
+            output.console.print(
+                "[dim]errex doesn't know how to take a system restore point on this OS / setup. "
+                "On macOS that's Time Machine (tmutil), on Windows it's System Restore, "
+                "on Linux it's timeshift.[/dim]"
+            )
+            return
+        output.console.print("[bold]Asking your OS to create a restore point…[/bold] [dim](this uses your OS's own snapshot tool, not errex's)[/dim]")
+        resp = create_restore_point(reason="errex checkpoint")
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ {resp['tool']}: {resp['message']}[/green]")
+        output.console.print("  [dim]You can roll back to this point from your OS's recovery tools if a change goes wrong.[/dim]")
+        return
+
+    if getattr(args, "cloud_backup", False):
+        from .backup import detect_cloud_sync_folders, sync_to_cloud_folder
+        found = detect_cloud_sync_folders()
+        if not found:
+            output.console.print(
+                "[dim]No cloud-sync folders detected (Google Drive, iCloud Drive, Dropbox, OneDrive). "
+                "Install one of those desktop apps and errex can mirror your backups into it.[/dim]"
+            )
+            return
+        output.console.print(f"[bold]Found {len(found)} cloud-sync folder(s):[/bold]\n")
+        for f in found:
+            output.console.print(f"  • {f['provider']}  [dim]{f['path']}[/dim]")
+        choice = found[0]
+        try:
+            ans = input(f"\nCopy errex backups into {choice['provider']} now? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            ans = "n"
+        if ans != "y":
+            return
+        resp = sync_to_cloud_folder(choice["path"])
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Backups copied to {resp['synced_to']}[/green]")
+        output.console.print(f"  [dim]{choice['provider']} will sync this folder to the cloud automatically.[/dim]")
+        return
+
     if getattr(args, "backups", False):
         from .backup import list_backups
         records = list_backups()
@@ -536,6 +587,8 @@ def main() -> None:
         or getattr(args, "ticket_note", None)
         or getattr(args, "devices", False)
         or getattr(args, "device_rename", None)
+        or getattr(args, "restore_point", False)
+        or getattr(args, "cloud_backup", False)
         or getattr(args, "backups", False)
         or getattr(args, "restore_backup", None)
         or getattr(args, "create_shortcut", False)
@@ -915,6 +968,9 @@ def main() -> None:
 
         if not result.findings:
             output.console.print("  [green]✔ No issues found.[/green]\n")
+            if args.mascot and not args.simple_mode:
+                from .mascot import say as _mascot_say
+                output.console.print(f"  [dim]{_mascot_say('all_clear')}[/dim]\n")
             if args.scan_speak:
                 speak("errex scan complete. No issues found — everything looks good.")
             return
@@ -948,6 +1004,9 @@ def main() -> None:
             output.console.print(
                 f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
             )
+        if args.mascot and not args.simple_mode:
+            from .mascot import say as _mascot_say
+            output.console.print(f"  [dim]{_mascot_say('issues_found')}[/dim]\n")
 
         if args.scan_speak:
             _crit_high = [f for f in result.findings if f.severity in ("critical", "high")]
@@ -1024,6 +1083,9 @@ def main() -> None:
                                 if _fix_disc_hook:
                                     from .discord_notify import notify_fix_applied
                                     notify_fix_applied(title, webhook_url=_fix_disc_hook)
+                        if args.mascot and any(r.success for r in fix_results):
+                            from .mascot import say as _mascot_say
+                            output.console.print(f"  [dim]{_mascot_say('fix_applied')}[/dim]")
         if args.verify:
             from .scan import verify_scan
             output.console.print("\n[bold]Verifying fixes...[/bold]")

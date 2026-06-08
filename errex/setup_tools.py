@@ -131,6 +131,9 @@ def run_welcome_scan() -> None:
     from .scan import run_scan, detect_platform
     from .scanners._base import SEVERITIES
 
+    from .mascot import say as _mascot_say
+    output.console.print(f"\n  [dim]{_mascot_say('welcome')}[/dim]")
+
     plat = detect_platform()
     output.console.print(f"\n[bold]Running your first scan on {plat}…[/bold] [dim](this is a one-time welcome scan)[/dim]\n")
 
