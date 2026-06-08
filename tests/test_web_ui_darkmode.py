@@ -43,3 +43,19 @@ def test_rht_red_accent():
 def test_red_hat_font():
     html = _get_html()
     assert 'Red Hat' in html
+
+def test_textsize_toggle_button_exists():
+    html = _get_html()
+    assert 'textsize-toggle' in html
+    assert 'toggleTextSize' in html
+
+
+def test_textsize_css_rule_exists():
+    html = _get_html()
+    assert '[data-textsize="large"]' in html
+
+
+def test_toggle_textsize_js_persists_to_localstorage():
+    html = _get_html()
+    assert 'function toggleTextSize' in html
+    assert 'errex-textsize' in html

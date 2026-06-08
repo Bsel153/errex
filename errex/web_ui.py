@@ -158,7 +158,8 @@ HTML = r"""<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=Red+Hat+Text:wght@400;500&display=swap" rel="stylesheet">
   <script>
-    (function(){var t=localStorage.getItem('errex-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();
+    (function(){var t=localStorage.getItem('errex-theme')||'dark';document.documentElement.setAttribute('data-theme',t);
+                var sz=localStorage.getItem('errex-textsize')||'normal';document.documentElement.setAttribute('data-textsize',sz);})();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
@@ -176,6 +177,10 @@ HTML = r"""<!DOCTYPE html>
     body { font-family: "Red Hat Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
            background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
 
+    /* ── Large text accessibility mode — scales the whole UI up ── */
+    [data-textsize="large"] { font-size: 1.25em; }
+    [data-textsize="large"] #out, [data-textsize="large"] #err { line-height: 1.6; }
+
     /* ── Two-column layout ── */
     .app { display: grid; grid-template-columns: 3fr 2fr; grid-template-rows: auto 1fr;
            height: 100vh; }
@@ -185,6 +190,9 @@ HTML = r"""<!DOCTYPE html>
     #theme-toggle { margin-left: 0.5rem; background: none; border: 1px solid var(--border); border-radius: 6px;
       color: var(--text); cursor: pointer; padding: 0.3rem 0.6rem; font-size: 0.82rem; transition: border-color 0.15s; }
     #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+    #textsize-toggle { margin-left: 0.25rem; background: none; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer; padding: 0.3rem 0.6rem; font-size: 0.82rem; transition: border-color 0.15s; }
+    #textsize-toggle:hover { border-color: var(--accent); color: var(--accent); }
     .hdr .sub { color: var(--muted); font-size: 0.82rem; }
     .main { padding: 1.1rem; overflow-y: auto; border-right: 1px solid var(--border);
             display: flex; flex-direction: column; gap: 0.75rem; }
@@ -375,6 +383,7 @@ HTML = r"""<!DOCTYPE html>
     <span id="license-badge"></span>
     <a href="/privacy" target="_blank" style="margin-left:auto;font-size:0.72rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:0.18rem 0.5rem;" title="Privacy policy — what errex sees and stores">🔒 Privacy</a>
     <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">🌙</button>
+    <button id="textsize-toggle" onclick="toggleTextSize()" title="Toggle large text">A+</button>
   </header>
 
   <main class="main">
@@ -726,6 +735,17 @@ HTML = r"""<!DOCTYPE html>
   // Set initial icon
   (function(){ var t=document.documentElement.getAttribute('data-theme')||'dark';
     var btn=document.getElementById('theme-toggle'); if(btn) btn.textContent=t==='dark'?'🌙':'☀️'; })();
+
+  function toggleTextSize() {
+    var current = document.documentElement.getAttribute('data-textsize') || 'normal';
+    var next = current === 'large' ? 'normal' : 'large';
+    document.documentElement.setAttribute('data-textsize', next);
+    localStorage.setItem('errex-textsize', next);
+    document.getElementById('textsize-toggle').setAttribute('aria-pressed', next === 'large');
+  }
+  // Reflect initial state for screen readers
+  (function(){ var s=document.documentElement.getAttribute('data-textsize')||'normal';
+    var btn=document.getElementById('textsize-toggle'); if(btn) btn.setAttribute('aria-pressed', s === 'large'); })();
 </script>
 </body>
 </html>"""
