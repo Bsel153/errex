@@ -55,6 +55,49 @@ def get_last_scan_info() -> dict | None:
     return last
 
 
+_STREAK_BAD_SEVERITIES = ("critical", "high", "medium")
+
+
+def current_health_streak_days() -> float | None:
+    """
+    How many days since the most recent scan that found a critical/high/medium issue.
+
+    Powers the gamified "health streak" shown in --scan-status — a running
+    counter that resets the moment something serious turns up again.
+    """
+    if not _SCAN_LOG.exists():
+        return None
+    entries = []
+    try:
+        with open(_SCAN_LOG, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        return None
+    if not entries:
+        return None
+
+    streak_start_ts = None
+    for entry in reversed(entries):
+        sevs = entry.get("severities", {})
+        if any(sevs.get(s, 0) for s in _STREAK_BAD_SEVERITIES):
+            break
+        ts = entry.get("timestamp")
+        if not ts:
+            break
+        streak_start_ts = ts
+    if streak_start_ts is None:
+        return None
+    try:
+        start = datetime.fromisoformat(streak_start_ts.rstrip("Z"))
+    except ValueError:
+        return None
+    return round((datetime.utcnow() - start).total_seconds() / 86400, 1)
+
+
 def setup_cron(frequency: str = "daily", platform: str | None = None) -> str:
     """Return cron/launchd/task-scheduler setup instructions."""
     import platform as _plat
@@ -112,4 +155,7 @@ def print_scan_status() -> None:
     if cats:
         cat_str = ", ".join(f"{v} {k}" for k, v in cats.items())
         console.print(f"[bold]Categories:[/bold] {cat_str}")
+    streak = current_health_streak_days()
+    if streak is not None and streak >= 1:
+        console.print(f"[bold]Health streak:[/bold] 🔥 {int(streak)} day(s) clean — keep it going!")
     console.print()

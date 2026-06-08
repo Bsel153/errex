@@ -24,7 +24,7 @@ from .explainers import (explain_exit_code, explain_http, explain_cron, explain_
 from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detect_environment,
                           print_completion, run_command, rerun_last_command, open_last_in_browser)
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
-                    check_for_update, get_env_info, notify)
+                    check_for_update, get_env_info, notify, speak)
 from .watch import watch_file
 from .patterns import list_patterns as _list_patterns
 
@@ -172,6 +172,10 @@ def main() -> None:
                         help="skip Claude explanations in --scan (faster, no API key needed)")
     parser.add_argument("--scan-quiet", action="store_true", dest="scan_quiet",
                         help="only print a one-line summary plus critical/high findings (use with --scan, ideal for scheduled scans)")
+    parser.add_argument("--scan-speak", action="store_true", dest="scan_speak",
+                        help="read the scan summary aloud using your OS's text-to-speech (accessibility; use with --scan)")
+    parser.add_argument("--simple", action="store_true", dest="simple_mode",
+                        help="stripped-down output — short titles only, no detail/explanations/icons (accessibility)")
     parser.add_argument("--scan-malware", nargs="?", const="~", metavar="PATH",
                         dest="scan_malware",
                         help="run malware scan (heuristics + ClamAV if installed) on PATH (default: home dir)")
@@ -911,19 +915,25 @@ def main() -> None:
 
         if not result.findings:
             output.console.print("  [green]✔ No issues found.[/green]\n")
+            if args.scan_speak:
+                speak("errex scan complete. No issues found — everything looks good.")
             return
 
-        # Display findings grouped by severity (quiet mode: critical/high only, one line each)
-        _shown_severities = ("critical", "high") if args.scan_quiet else SEVERITIES
+        # Display findings grouped by severity (quiet/simple mode: critical/high only, one line each)
+        _terse = args.scan_quiet or args.simple_mode
+        _shown_severities = ("critical", "high") if _terse else SEVERITIES
         for severity in _shown_severities:
             for finding in result.findings:
                 if finding.severity != severity:
                     continue
-                icon = _severity_icons.get(severity, "•")
-                output.console.print(
-                    f"\n  {icon} [bold]{severity.upper()}[/bold]  {finding.title}"
-                )
-                if args.scan_quiet:
+                if args.simple_mode:
+                    output.console.print(f"  {severity.upper()}: {finding.title}")
+                else:
+                    icon = _severity_icons.get(severity, "•")
+                    output.console.print(
+                        f"\n  {icon} [bold]{severity.upper()}[/bold]  {finding.title}"
+                    )
+                if _terse:
                     continue
                 for line in finding.detail.splitlines()[:5]:
                     output.console.print(f"     [dim]{line}[/dim]")
@@ -932,12 +942,24 @@ def main() -> None:
 
         total = len(result.findings)
         fixable = sum(1 for f in result.findings if f.is_fixable())
-        output.console.print(
-            f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
-        )
+        if args.simple_mode:
+            output.console.print(f"\n  {total} finding(s), {fixable} can be auto-fixed.\n")
+        else:
+            output.console.print(
+                f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
+            )
 
-        # Explain with Claude (skipped in quiet mode — scheduled scans don't need streamed prose)
-        if not args.scan_no_explain and not args.scan_quiet:
+        if args.scan_speak:
+            _crit_high = [f for f in result.findings if f.severity in ("critical", "high")]
+            if _crit_high:
+                _spoken = (f"errex found {total} issues, including {len(_crit_high)} that need urgent attention. "
+                           + " ".join(f.title for f in _crit_high[:5]))
+            else:
+                _spoken = f"errex scan complete. Found {total} minor issue(s), nothing urgent."
+            speak(_spoken)
+
+        # Explain with Claude (skipped in quiet/simple mode — keep unattended/accessible scans terse)
+        if not args.scan_no_explain and not _terse:
             api_key = _os.environ.get("ANTHROPIC_API_KEY")
             if api_key:
                 output.console.print("  [bold]Explanations[/bold] (Claude)\n")
