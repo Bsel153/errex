@@ -209,6 +209,73 @@ def check_clean_streak() -> Finding | None:
     )
 
 
+_ANNIVERSARY_YEARS = (1, 2, 3, 5)
+
+
+def check_anniversary() -> Finding | None:
+    """
+    Celebrate a yearly anniversary of using errex — "1 year with errex —
+    here's what got fixed for you" — using the oldest scan-log entry as the
+    "first scan" date and the local ticket store for the "what got fixed" tally.
+    """
+    try:
+        from .._scan_scheduler import _SCAN_LOG
+        if not _SCAN_LOG.exists():
+            return None
+        first_ts = None
+        with open(_SCAN_LOG, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("timestamp")
+                if ts:
+                    first_ts = ts
+                    break
+    except Exception:
+        return None
+    if not first_ts:
+        return None
+
+    try:
+        first_seen = datetime.datetime.fromisoformat(first_ts.rstrip("Z"))
+    except ValueError:
+        return None
+
+    years = (datetime.datetime.utcnow() - first_seen).days / 365.25
+    anniversary = max((y for y in _ANNIVERSARY_YEARS if years >= y), default=None)
+    if anniversary is None:
+        return None
+
+    state = _load_milestone_state()
+    if state.get("last_anniversary", 0) >= anniversary:
+        return None
+    state["last_anniversary"] = anniversary
+    _save_milestone_state(state)
+
+    try:
+        from ..tickets import load_all
+        fixed_count = sum(1 for t in load_all() if t.status == "closed")
+    except Exception:
+        fixed_count = 0
+
+    plural = "year" if anniversary == 1 else "years"
+    fixed_line = (f"In that time errex has helped close out {fixed_count} issue(s) on this machine. "
+                  if fixed_count else "")
+    return Finding(
+        id=f"diag-anniversary-{anniversary}y",
+        severity="info",
+        category="diagnostic",
+        platform="cross",
+        title=f"🎂 {anniversary} {plural} with errex!",
+        detail=(
+            f"It's been {anniversary} {plural} since your first scan. {fixed_line}"
+            "Thanks for trusting errex to keep an eye on things."
+        ),
+    )
+
+
 # ── Memory pressure ──────────────────────────────────────────────────────────
 
 
@@ -637,6 +704,7 @@ def get_checks() -> list[tuple[str, callable]]:
         ("Duplicate files",   check_duplicate_files),
         ("Browser cache",     check_browser_junk),
         ("Clean streak",      check_clean_streak),
+        ("Anniversary",       check_anniversary),
     ]
 
 
@@ -650,6 +718,37 @@ def _load_device_history() -> dict:
         return json.loads(_DEVICE_HISTORY_FILE.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError, ValueError):
         return {}
+
+
+def _device_display_name(ip: str, record: dict, raw: dict | None = None) -> str:
+    """Prefer a customer-given nickname, then hostname, then name, then the bare IP."""
+    raw = raw or {}
+    return (record.get("nickname") or record.get("hostname") or record.get("name")
+            or raw.get("hostname") or raw.get("name") or ip)
+
+
+def set_device_nickname(ip: str, nickname: str) -> dict:
+    """Give a device a friendly name, e.g. 'Living Room TV'. Returns the updated record."""
+    history = _load_device_history()
+    record = history.setdefault(ip, {"seen_count": 0})
+    record["nickname"] = nickname
+    _save_device_history(history)
+    return record
+
+
+def list_known_devices() -> list[dict]:
+    """Return known devices with ip, nickname, hostname, status — for `errex --devices`."""
+    history = _load_device_history()
+    out = []
+    for ip, record in history.items():
+        out.append({
+            "ip": ip,
+            "nickname": record.get("nickname"),
+            "hostname": record.get("hostname") or record.get("name"),
+            "status": record.get("status", "unknown"),
+            "last_seen": record.get("last_seen"),
+        })
+    return out
 
 
 def _save_device_history(history: dict) -> None:
@@ -682,7 +781,7 @@ def check_offline_devices(current_devices: list[dict]) -> list[Finding]:
             continue
         if record.get("status") == "offline":
             continue  # already flagged; don't re-open every scan
-        name = record.get("hostname") or record.get("name") or ip
+        name = _device_display_name(ip, record)
         findings.append(Finding(
             id=f"diag-device-offline-{ip.replace('.', '_')}",
             severity="medium",
@@ -704,7 +803,7 @@ def check_offline_devices(current_devices: list[dict]) -> list[Finding]:
             continue
         record = history.get(ip)
         if record is None and has_baseline:
-            name = d.get("hostname") or d.get("name") or ip
+            name = _device_display_name(ip, {}, raw=d)
             findings.append(Finding(
                 id=f"diag-device-new-{ip.replace('.', '_')}",
                 severity="low",

@@ -105,9 +105,64 @@ def run_setup() -> None:
         if ans in ("", "y"):
             install_shell()
 
+    # 6. Welcome scan — Pro customers see value immediately
+    output.console.print()
+    from .license import is_pro
+    if is_pro():
+        try:
+            ans = input("Run a welcome scan now to see what errex finds on this machine? [Y/n]: ").strip().lower()
+        except KeyboardInterrupt:
+            ans = "n"
+        if ans in ("", "y"):
+            run_welcome_scan()
+    else:
+        output.console.print(
+            "[dim]errex Pro includes a full security & diagnostics scan "
+            "(--scan) — upgrade to run your first welcome scan.[/dim]"
+        )
+
     output.console.print()
     output.console.rule("[dim]Setup complete[/dim]")
     output.console.print("\nRun [cyan]errex --scan[/cyan] to find error logs, or just pipe any error:\n  [dim]cat error.log | errex[/dim]\n")
+
+
+def run_welcome_scan() -> None:
+    """Run a one-time deep scan right after setup so new customers see value immediately."""
+    from .scan import run_scan, detect_platform
+    from .scanners._base import SEVERITIES
+
+    plat = detect_platform()
+    output.console.print(f"\n[bold]Running your first scan on {plat}…[/bold] [dim](this is a one-time welcome scan)[/dim]\n")
+
+    def _progress(name, done, total):
+        output.console.print(f"  Checking [dim]{name}[/dim]…", end="\r")
+
+    result = run_scan(progress_cb=_progress)
+    output.console.print(" " * 60, end="\r")
+
+    try:
+        from ._scan_scheduler import log_scan_result
+        log_scan_result(result)
+    except Exception:
+        pass
+
+    if not result.findings:
+        output.console.print("[green]✔ All clear — no issues found on this machine.[/green]\n")
+        return
+
+    icons = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+    counts = {s: sum(1 for f in result.findings if f.severity == s) for s in SEVERITIES}
+    summary = ", ".join(f"{counts[s]} {s}" for s in SEVERITIES if counts[s])
+    output.console.print(f"[bold]Found {len(result.findings)} thing(s) worth a look:[/bold] {summary}\n")
+    for severity in ("critical", "high"):
+        for finding in result.findings:
+            if finding.severity != severity:
+                continue
+            output.console.print(f"  {icons[severity]} [bold]{finding.title}[/bold]")
+    output.console.print(
+        "\n[dim]Run[/dim] [cyan]errex --scan[/cyan] [dim]for the full report, "
+        "or[/dim] [cyan]errex --scan --scan-fix[/cyan] [dim]to fix what can be auto-fixed.[/dim]\n"
+    )
 
 
 def run_doctor(offline: bool = False) -> None:

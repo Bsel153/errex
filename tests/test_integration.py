@@ -160,6 +160,30 @@ def test_history_no_history(tmp_path):
     assert "No history" in r.stdout
 
 
+def test_devices_no_devices_yet(tmp_path):
+    r = run(["--devices"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+    assert "No devices known yet" in r.stdout
+
+
+def test_device_rename_requires_name(tmp_path):
+    r = run(["--device-rename", "10.0.0.5"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode != 0
+    assert "requires --name" in (r.stdout + r.stderr)
+
+
+def test_device_rename_then_list(tmp_path):
+    r1 = run(["--device-rename", "10.0.0.5", "--name", "Living Room TV"],
+             env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r1.returncode == 0
+    assert "Living Room TV" in r1.stdout
+
+    r2 = run(["--devices"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r2.returncode == 0
+    assert "Living Room TV" in r2.stdout
+    assert "10.0.0.5" in r2.stdout
+
+
 def test_backups_no_backups_yet(tmp_path):
     r = run(["--backups"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
     assert r.returncode == 0

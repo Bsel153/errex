@@ -194,6 +194,12 @@ def main() -> None:
                         help="add a tech note to a ticket (use with --note \"text\")")
     parser.add_argument("--note", metavar="TEXT", dest="note_text",
                         help="note text to attach (use with --ticket-note)")
+    parser.add_argument("--devices", action="store_true",
+                        help="list known devices on your network (from --scan history)")
+    parser.add_argument("--device-rename", metavar="IP", dest="device_rename",
+                        help="give a device a friendly nickname, e.g. --device-rename 192.168.1.5 --name \"Living Room TV\"")
+    parser.add_argument("--name", metavar="NICKNAME", dest="device_nickname",
+                        help="nickname text (use with --device-rename)")
     parser.add_argument("--backups", action="store_true",
                         help="list recent auto-fix backups (files errex copied before modifying them)")
     parser.add_argument("--restore-backup", metavar="PATH", dest="restore_backup",
@@ -459,6 +465,35 @@ def main() -> None:
         output.console.print(f"  [dim]\"{note_text}\"[/dim]")
         return
 
+    if getattr(args, "devices", False):
+        from .scanners.diagnostics import list_known_devices
+        devices = list_known_devices()
+        if not devices:
+            output.console.print("[dim]No devices known yet — run [cyan]errex --scan[/cyan] to discover devices on your network.[/dim]")
+            return
+        _status_icons = {"online": "🟢", "offline": "🔴", "unknown": "⚪"}
+        output.console.print(f"[bold]{len(devices)} known device(s):[/bold]\n")
+        for d in devices:
+            label = d["nickname"] or d["hostname"] or d["ip"]
+            icon = _status_icons.get(d["status"], "⚪")
+            output.console.print(f"  {icon} [bold]{label}[/bold]  [dim]{d['ip']}[/dim]")
+            if d["nickname"] and d["hostname"]:
+                output.console.print(f"     [dim]({d['hostname']})[/dim]")
+        output.console.print(
+            "\n[dim]Rename a device:[/dim] [cyan]errex --device-rename <ip> --name \"Living Room TV\"[/cyan]\n"
+        )
+        return
+
+    if getattr(args, "device_rename", None):
+        nickname = getattr(args, "device_nickname", None)
+        if not nickname:
+            output.err_console.print("[red]errex: --device-rename requires --name \"nickname\"[/red]")
+            sys.exit(1)
+        from .scanners.diagnostics import set_device_nickname
+        set_device_nickname(args.device_rename, nickname)
+        output.console.print(f"[green]✓ {args.device_rename} is now called \"{nickname}\"[/green]")
+        return
+
     if getattr(args, "backups", False):
         from .backup import list_backups
         records = list_backups()
@@ -495,6 +530,8 @@ def main() -> None:
         or getattr(args, "ticket_snooze", None)
         or getattr(args, "ticket_reopen", None)
         or getattr(args, "ticket_note", None)
+        or getattr(args, "devices", False)
+        or getattr(args, "device_rename", None)
         or getattr(args, "backups", False)
         or getattr(args, "restore_backup", None)
         or getattr(args, "create_shortcut", False)

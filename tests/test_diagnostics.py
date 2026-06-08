@@ -377,5 +377,103 @@ def test_get_checks_returns_callables():
     assert "Duplicate files" in names
     assert "Browser cache" in names
     assert "Clean streak" in names
+    assert "Anniversary" in names
     for _, fn in checks:
         assert callable(fn)
+
+
+class TestAnniversary:
+    def _patch(self, monkeypatch, tmp_path):
+        log_file = tmp_path / "scan_log.jsonl"
+        milestone_file = tmp_path / "milestones.json"
+        tickets_file = tmp_path / "tickets.jsonl"
+        monkeypatch.setattr("errex._scan_scheduler._SCAN_LOG", log_file)
+        monkeypatch.setattr(diagnostics, "_MILESTONE_FILE", milestone_file)
+        monkeypatch.setattr("errex.tickets._TICKETS_FILE", tickets_file)
+        return log_file, milestone_file, tickets_file
+
+    def _write_log(self, log_file, entries):
+        import json as _json
+        with open(log_file, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(_json.dumps(e) + "\n")
+
+    def test_returns_none_without_log(self, monkeypatch, tmp_path):
+        self._patch(monkeypatch, tmp_path)
+        assert diagnostics.check_anniversary() is None
+
+    def test_returns_none_before_first_anniversary(self, monkeypatch, tmp_path):
+        log_file, _, _ = self._patch(monkeypatch, tmp_path)
+        self._write_log(log_file, [{"timestamp": _iso_days_ago(30)}])
+        assert diagnostics.check_anniversary() is None
+
+    def test_fires_at_one_year(self, monkeypatch, tmp_path):
+        log_file, _, _ = self._patch(monkeypatch, tmp_path)
+        self._write_log(log_file, [
+            {"timestamp": _iso_days_ago(370)},
+            {"timestamp": _iso_days_ago(2)},
+        ])
+        finding = diagnostics.check_anniversary()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-anniversary-1y"
+        assert finding.severity == "info"
+        assert "1 year" in finding.title
+
+    def test_includes_fixed_ticket_count(self, monkeypatch, tmp_path):
+        log_file, _, _ = self._patch(monkeypatch, tmp_path)
+        self._write_log(log_file, [{"timestamp": _iso_days_ago(370)}])
+
+        from errex.tickets import create_ticket, close_ticket
+        t = create_ticket("Bad config", "high")
+        close_ticket(t.id)
+
+        finding = diagnostics.check_anniversary()
+        assert "1 issue(s)" in finding.detail
+
+    def test_does_not_refire_same_anniversary(self, monkeypatch, tmp_path):
+        log_file, _, _ = self._patch(monkeypatch, tmp_path)
+        self._write_log(log_file, [{"timestamp": _iso_days_ago(370)}])
+        first = diagnostics.check_anniversary()
+        assert first is not None
+        assert diagnostics.check_anniversary() is None
+
+    def test_fires_again_at_second_anniversary(self, monkeypatch, tmp_path):
+        log_file, milestone_file, _ = self._patch(monkeypatch, tmp_path)
+        self._write_log(log_file, [{"timestamp": _iso_days_ago(370)}])
+        diagnostics.check_anniversary()
+
+        self._write_log(log_file, [{"timestamp": _iso_days_ago(740)}])
+        second = diagnostics.check_anniversary()
+        assert second is not None
+        assert second.id == "diag-anniversary-2y"
+
+
+class TestDeviceNicknames:
+    def _patch_history(self, monkeypatch, tmp_path):
+        history_file = tmp_path / "devices.json"
+        monkeypatch.setattr(diagnostics, "_DEVICE_HISTORY_FILE", history_file)
+        return history_file
+
+    def test_set_and_list_nickname(self, monkeypatch, tmp_path):
+        self._patch_history(monkeypatch, tmp_path)
+        diagnostics.set_device_nickname("10.0.0.5", "Living Room TV")
+
+        devices = diagnostics.list_known_devices()
+        assert len(devices) == 1
+        assert devices[0]["ip"] == "10.0.0.5"
+        assert devices[0]["nickname"] == "Living Room TV"
+
+    def test_nickname_overrides_hostname_in_findings(self, monkeypatch, tmp_path):
+        self._patch_history(monkeypatch, tmp_path)
+        device = {"ip": "10.0.0.5", "hostname": "raw-hostname"}
+        diagnostics.check_offline_devices([device])
+        diagnostics.set_device_nickname("10.0.0.5", "Dad's Laptop")
+        diagnostics.check_offline_devices([device])
+
+        findings = diagnostics.check_offline_devices([])
+        assert len(findings) == 1
+        assert "Dad's Laptop" in findings[0].title
+
+    def test_list_known_devices_empty(self, monkeypatch, tmp_path):
+        self._patch_history(monkeypatch, tmp_path)
+        assert diagnostics.list_known_devices() == []
