@@ -61,9 +61,10 @@ def run_scan(
         from .scanners import linux
         checks.extend(linux.get_checks())
 
-    from .scanners import cve, malware
+    from .scanners import cve, malware, diagnostics
     checks.append(("Python Package CVEs", cve.check_python_packages))
     checks.extend(malware.get_checks())
+    checks.extend(diagnostics.get_checks())
 
     findings: list[Finding] = []
     total = len(checks) + (1 if network else 0)

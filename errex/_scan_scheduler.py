@@ -17,6 +17,9 @@ def log_scan_result(result) -> None:
         "finding_count": len(result.findings),
         "severities": {s: sum(1 for f in result.findings if f.severity == s)
                        for s in ("critical", "high", "medium", "low", "info") if any(f.severity == s for f in result.findings)},
+        "categories": {c: sum(1 for f in result.findings if f.category == c)
+                       for c in ("security", "misconfiguration", "error", "diagnostic")
+                       if any(f.category == c for f in result.findings)},
     }
     with open(_SCAN_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -92,4 +95,8 @@ def print_scan_status() -> None:
     sev_str = ", ".join(f"{v} {k}" for k, v in sevs.items()) if sevs else "none"
     console.print(f"\n[bold]Last scan:[/bold] {ts}")
     console.print(f"[bold]Findings:[/bold] {count} total — {sev_str}")
+    cats = last.get("categories", {})
+    if cats:
+        cat_str = ", ".join(f"{v} {k}" for k, v in cats.items())
+        console.print(f"[bold]Categories:[/bold] {cat_str}")
     console.print()

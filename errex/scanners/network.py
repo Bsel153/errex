@@ -236,6 +236,13 @@ def get_findings() -> list[Finding]:
 
     device_list = sorted(devices.values(), key=lambda x: x["ip"])
 
+    # Offline-device detection (compares against history of previous scans)
+    try:
+        from .diagnostics import check_offline_devices
+        findings.extend(check_offline_devices(device_list))
+    except Exception:
+        pass
+
     # Summary info finding
     lines = [
         f"  {d['ip']:16s} {d.get('hostname',''):22s} {d.get('server','') or d.get('mac','')}"
