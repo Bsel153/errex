@@ -141,3 +141,50 @@ def test_to_dict_roundtrip(tmp_path, monkeypatch):
     assert d["title"] == "Round"
     assert d["severity"] == "high"
     assert d["finding_id"] == "f1"
+
+
+def test_add_note(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    t = T.create_ticket("Needs notes", "medium")
+    updated = T.add_note(t.id, "Replaced the router firmware", author="tech1")
+    assert updated is not None
+    assert len(updated.notes) == 1
+    assert updated.notes[0]["text"] == "Replaced the router firmware"
+    assert updated.notes[0]["author"] == "tech1"
+    assert "at" in updated.notes[0]
+
+
+def test_add_multiple_notes_appends(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    t = T.create_ticket("Multi note", "low")
+    T.add_note(t.id, "First note")
+    T.add_note(t.id, "Second note")
+    loaded = T.load_all()[0]
+    assert [n["text"] for n in loaded.notes] == ["First note", "Second note"]
+
+
+def test_add_note_persists_to_file(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    t = T.create_ticket("Persisted", "high")
+    T.add_note(t.id, "Saved note")
+    loaded = T.load_all()[0]
+    assert loaded.notes[0]["text"] == "Saved note"
+
+
+def test_add_note_unknown_ticket_returns_none(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    assert T.add_note("doesnotexist", "text") is None
+
+
+def test_add_note_via_partial_id(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    t = T.create_ticket("Prefix note", "medium")
+    updated = T.add_note(t.id[:4], "Found via prefix")
+    assert updated is not None
+    assert updated.notes[0]["text"] == "Found via prefix"
+
+
+def test_new_ticket_has_empty_notes(tmp_path, monkeypatch):
+    _patch_file(tmp_path, monkeypatch)
+    t = T.create_ticket("Fresh", "info")
+    assert t.notes == []

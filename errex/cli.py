@@ -46,12 +46,16 @@ def _print_tickets() -> None:
     for t in open_tickets:
         icon = _sev_icons.get(t.severity, "•")
         gh = f"  [dim]GH #{t.github_issue_number}[/dim]" if t.github_issue_number else ""
-        output.console.print(f"  {icon} [bold]{t.id}[/bold]  {t.title}{gh}")
+        notes_tag = f"  [dim]📝 {len(t.notes)} note(s)[/dim]" if t.notes else ""
+        output.console.print(f"  {icon} [bold]{t.id}[/bold]  {t.title}{gh}{notes_tag}")
         if t.detail:
             output.console.print(f"     [dim]{t.detail[:80]}[/dim]")
+        for note in t.notes[-2:]:
+            output.console.print(f"     [dim]📝 {note.get('text', '')[:80]}[/dim]")
     output.console.print(
         f"\n  [dim]Close: errex --ticket-close ID  |  "
-        f"Snooze: errex --ticket-snooze ID[/dim]\n"
+        f"Snooze: errex --ticket-snooze ID  |  "
+        f"Note: errex --ticket-note ID --note \"text\"[/dim]\n"
     )
 
 
@@ -181,6 +185,10 @@ def main() -> None:
                         help="number of days to snooze a ticket (use with --ticket-snooze)")
     parser.add_argument("--ticket-reopen", metavar="ID", dest="ticket_reopen",
                         help="reopen a closed or snoozed ticket")
+    parser.add_argument("--ticket-note", metavar="ID", dest="ticket_note",
+                        help="add a tech note to a ticket (use with --note \"text\")")
+    parser.add_argument("--note", metavar="TEXT", dest="note_text",
+                        help="note text to attach (use with --ticket-note)")
     # ── Discord / GitHub integration ────────────────────────────────────────────
     parser.add_argument("--discord-webhook", metavar="URL", dest="discord_webhook",
                         help="Discord webhook URL for scan notifications (or set $ERREX_DISCORD_WEBHOOK)")
@@ -422,6 +430,20 @@ def main() -> None:
         _ticket_action("reopen", args.ticket_reopen)
         return
 
+    if getattr(args, "ticket_note", None):
+        note_text = getattr(args, "note_text", None)
+        if not note_text:
+            output.err_console.print("[red]errex: --ticket-note requires --note \"text\"[/red]")
+            sys.exit(1)
+        from .tickets import add_note
+        t = add_note(args.ticket_note, note_text)
+        if not t:
+            output.console.print(f"[red]Ticket '{args.ticket_note}' not found.[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Note added to ticket {t.id}: {t.title}[/green]")
+        output.console.print(f"  [dim]\"{note_text}\"[/dim]")
+        return
+
     # First-run scan (once only, no API key needed)
     _skip_first_scan = (
         args.scan or args.setup
@@ -435,6 +457,7 @@ def main() -> None:
         or getattr(args, "ticket_close", None)
         or getattr(args, "ticket_snooze", None)
         or getattr(args, "ticket_reopen", None)
+        or getattr(args, "ticket_note", None)
         or getattr(args, "create_shortcut", False)
         or args.history is not None or args.stats
         or args.list_profiles or args.completion or args.doctor

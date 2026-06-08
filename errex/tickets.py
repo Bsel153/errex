@@ -37,6 +37,8 @@ class Ticket:
     def github_issue_number(self) -> int | None: return self._d.get("github_issue_number")
     @property
     def snooze_until(self) -> str | None: return self._d.get("snooze_until")
+    @property
+    def notes(self) -> list[dict]: return self._d.get("notes", [])
 
     def to_dict(self) -> dict:
         return dict(self._d)
@@ -75,6 +77,7 @@ def create_ticket(
         "updated_at": _now(),
         "github_issue_number": None,
         "snooze_until": None,
+        "notes": [],
     }
     ticket = Ticket(data)
     _append(ticket)
@@ -119,6 +122,25 @@ def update_ticket(ticket_id: str, **kwargs) -> Ticket | None:
     if updated:
         _rewrite(tickets)
     return updated
+
+
+def add_note(ticket_id: str, text: str, author: str | None = None) -> Ticket | None:
+    """Append a tech note to a ticket — for RHT technicians to record diagnosis/work done."""
+    tickets = load_all()
+    target = None
+    for t in tickets:
+        if t.id == ticket_id or t.id.startswith(ticket_id):
+            target = t
+            break
+    if not target:
+        return None
+    note = {"text": text, "author": author or "", "at": _now()}
+    notes = list(target.notes)
+    notes.append(note)
+    target._d["notes"] = notes
+    target._d["updated_at"] = _now()
+    _rewrite(tickets)
+    return target
 
 
 def close_ticket(ticket_id: str) -> Ticket | None:
