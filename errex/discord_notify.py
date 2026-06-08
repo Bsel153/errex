@@ -95,6 +95,21 @@ def notify_ticket_closed(ticket: "Ticket", webhook_url: str | None = None) -> di
     return _post(url, {"embeds": [embed]})
 
 
+def notify_fix_applied(title: str, webhook_url: str | None = None) -> dict:
+    """Post an instant alert that errex found and auto-fixed an issue."""
+    url = _get_webhook(webhook_url)
+    if not url:
+        return {"error": "No Discord webhook URL."}
+
+    embed = {
+        "title": "✅ errex auto-fixed an issue",
+        "description": title,
+        "color": 0x3D9970,
+        "footer": {"text": "errex security scanner"},
+    }
+    return _post(url, {"embeds": [embed]})
+
+
 def notify_scan_summary(
     open_count: int,
     critical_count: int,

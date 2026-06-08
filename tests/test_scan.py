@@ -44,6 +44,23 @@ class TestFinding:
         assert d["fixable"] is True
         assert d["web_fixable"] is False
         assert "explanation" in d
+        assert d["fix_confidence"] == "medium"
+
+    def test_fix_confidence_high_for_fix_fn(self):
+        f = Finding("id", "high", "security", "macos", "T", "D", fix_fn=lambda: True)
+        assert f.fix_confidence() == "high"
+
+    def test_fix_confidence_medium_for_real_command(self):
+        f = Finding("id", "high", "security", "macos", "T", "D", fix_cmd="defaults write x -bool true")
+        assert f.fix_confidence() == "medium"
+
+    def test_fix_confidence_none_for_manual_instructions(self):
+        f = Finding("id", "high", "security", "macos", "T", "D", fix_cmd="# Log in and change the password")
+        assert f.fix_confidence() is None
+
+    def test_fix_confidence_none_when_not_fixable(self):
+        f = Finding("id", "high", "security", "macos", "T", "D")
+        assert f.fix_confidence() is None
 
 
 class TestScanResult:

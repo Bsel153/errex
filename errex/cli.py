@@ -24,7 +24,7 @@ from .explainers import (explain_exit_code, explain_http, explain_cron, explain_
 from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detect_environment,
                           print_completion, run_command, rerun_last_command, open_last_in_browser)
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
-                    check_for_update, get_env_info)
+                    check_for_update, get_env_info, notify)
 from .watch import watch_file
 from .patterns import list_patterns as _list_patterns
 
@@ -882,6 +882,14 @@ def main() -> None:
             if not fixable_findings:
                 output.console.print("  No auto-fixable issues found.\n")
             else:
+                _confidence_tags = {
+                    "high":   "[green]high confidence[/green]",
+                    "medium": "[yellow]medium confidence[/yellow]",
+                }
+                _fix_disc_hook = (getattr(args, "discord_webhook", None)
+                                  or config.get("discord_webhook")
+                                  or _os.environ.get("ERREX_DISCORD_WEBHOOK"))
+                _findings_by_id = {f.id: f for f in fixable_findings}
                 for severity in SEVERITIES:
                     batch = [f for f in fixable_findings if f.severity == severity]
                     if not batch:
@@ -890,8 +898,10 @@ def main() -> None:
                         f"\n  Apply [bold]{len(batch)} {severity.upper()}[/bold] fix(es)?"
                     )
                     for f in batch:
+                        tag = _confidence_tags.get(f.fix_confidence(), "")
+                        tag = f"  [dim]({tag})[/dim]" if tag else ""
                         output.console.print(
-                            f"    • {f.title}  [dim]→  {f.fix_cmd or 'python fix'}[/dim]"
+                            f"    • {f.title}  [dim]→  {f.fix_cmd or 'python fix'}[/dim]{tag}"
                         )
                     resp = input("  [y/N] ").strip().lower()
                     if resp == "y":
@@ -901,6 +911,12 @@ def main() -> None:
                             output.console.print(f"  {mark} {r.message}")
                             if r.success:
                                 _auto_fixed_ids.add(r.finding_id)
+                                fixed_finding = _findings_by_id.get(r.finding_id)
+                                title = fixed_finding.title if fixed_finding else r.finding_id
+                                notify("errex — issue fixed", title)
+                                if _fix_disc_hook:
+                                    from .discord_notify import notify_fix_applied
+                                    notify_fix_applied(title, webhook_url=_fix_disc_hook)
         if args.verify:
             from .scan import verify_scan
             output.console.print("\n[bold]Verifying fixes...[/bold]")

@@ -122,6 +122,93 @@ def check_startup_items() -> Finding | None:
     )
 
 
+# ── Milestone alerts ─────────────────────────────────────────────────────────
+
+_MILESTONE_DAYS = (7, 30, 90, 180, 365)
+_MILESTONE_FILE = Path.home() / ".errex_milestones.json"
+_BAD_SEVERITIES = ("critical", "high", "medium")
+
+
+def _load_milestone_state() -> dict:
+    if not _MILESTONE_FILE.exists():
+        return {}
+    try:
+        return json.loads(_MILESTONE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError):
+        return {}
+
+
+def _save_milestone_state(state: dict) -> None:
+    try:
+        _MILESTONE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def check_clean_streak() -> Finding | None:
+    """
+    Celebrate a meaningful run of clean scans — e.g. "30 days running clean!"
+    Each milestone is only announced once, the first time it's crossed.
+    """
+    try:
+        from .._scan_scheduler import _SCAN_LOG
+        if not _SCAN_LOG.exists():
+            return None
+        entries = []
+        with open(_SCAN_LOG, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except Exception:
+        return None
+
+    if not entries:
+        return None
+
+    streak_start_ts = None
+    for entry in reversed(entries):
+        sevs = entry.get("severities", {})
+        if any(sevs.get(s, 0) for s in _BAD_SEVERITIES):
+            break
+        ts = entry.get("timestamp")
+        if not ts:
+            break
+        streak_start_ts = ts
+
+    if streak_start_ts is None:
+        return None
+
+    try:
+        start = datetime.datetime.fromisoformat(streak_start_ts.rstrip("Z"))
+    except ValueError:
+        return None
+
+    streak_days = (datetime.datetime.utcnow() - start).total_seconds() / 86400
+    milestone = max((m for m in _MILESTONE_DAYS if streak_days >= m), default=None)
+    if milestone is None:
+        return None
+
+    state = _load_milestone_state()
+    if state.get("last_milestone", 0) >= milestone:
+        return None
+
+    state["last_milestone"] = milestone
+    _save_milestone_state(state)
+    return Finding(
+        id=f"diag-milestone-{milestone}d",
+        severity="info",
+        category="diagnostic",
+        platform="cross",
+        title=f"🎉 {milestone} days running clean!",
+        detail=(
+            f"No critical, high, or medium issues have turned up in scans for "
+            f"{milestone}+ days straight. Whatever you're doing, keep doing it."
+        ),
+    )
+
+
 # ── Memory pressure ──────────────────────────────────────────────────────────
 
 
@@ -549,6 +636,7 @@ def get_checks() -> list[tuple[str, callable]]:
         ("Disk trend",        check_predictive_disk_failure),
         ("Duplicate files",   check_duplicate_files),
         ("Browser cache",     check_browser_junk),
+        ("Clean streak",      check_clean_streak),
     ]
 
 

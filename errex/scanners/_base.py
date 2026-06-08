@@ -28,6 +28,19 @@ class Finding:
         """True if the fix can be applied from the web UI (no sudo / pure Python)."""
         return self.fix_fn is not None
 
+    def fix_confidence(self) -> str | None:
+        """
+        How confident errex is that an automated fix will work cleanly.
+        'high'   — a pure-Python fix function (tested, no shell side effects)
+        'medium' — a real shell command will be run
+        None     — not auto-fixable (e.g. fix_cmd is manual/instructional, starts with '#')
+        """
+        if self.fix_fn is not None:
+            return "high"
+        if self.fix_cmd and not self.fix_cmd.lstrip().startswith("#"):
+            return "medium"
+        return None
+
     def severity_rank(self) -> int:
         return _RANK.get(self.severity, 99)
 
@@ -42,6 +55,7 @@ class Finding:
             "fix_cmd": self.fix_cmd,
             "fixable": self.is_fixable(),
             "web_fixable": self.web_fixable(),
+            "fix_confidence": self.fix_confidence(),
             "explanation": self.explanation,
             "cve_ids": self.cve_ids,
         }

@@ -8,6 +8,72 @@ from errex.scanners._base import Finding
 from errex.scanners import diagnostics
 
 
+def _iso_days_ago(days: float) -> str:
+    import datetime
+    return (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat() + "Z"
+
+
+class TestCleanStreak:
+    def _patch(self, monkeypatch, tmp_path):
+        log_file = tmp_path / "scan_log.jsonl"
+        milestone_file = tmp_path / "milestones.json"
+        monkeypatch.setattr("errex._scan_scheduler._SCAN_LOG", log_file)
+        monkeypatch.setattr(diagnostics, "_MILESTONE_FILE", milestone_file)
+        return log_file, milestone_file
+
+    def _write(self, log_file, entries):
+        import json as _json
+        with open(log_file, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(_json.dumps(e) + "\n")
+
+    def test_returns_none_without_log(self, monkeypatch, tmp_path):
+        self._patch(monkeypatch, tmp_path)
+        assert diagnostics.check_clean_streak() is None
+
+    def test_returns_none_when_streak_too_short(self, monkeypatch, tmp_path):
+        log_file, _ = self._patch(monkeypatch, tmp_path)
+        self._write(log_file, [
+            {"timestamp": _iso_days_ago(2), "severities": {}},
+            {"timestamp": _iso_days_ago(1), "severities": {}},
+        ])
+        assert diagnostics.check_clean_streak() is None
+
+    def test_flags_milestone_when_streak_long_enough(self, monkeypatch, tmp_path):
+        log_file, milestone_file = self._patch(monkeypatch, tmp_path)
+        self._write(log_file, [
+            {"timestamp": _iso_days_ago(10), "severities": {}},
+            {"timestamp": _iso_days_ago(5), "severities": {"low": 1}},
+            {"timestamp": _iso_days_ago(1), "severities": {"info": 2}},
+        ])
+        finding = diagnostics.check_clean_streak()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-milestone-7d"
+        assert finding.severity == "info"
+        assert "7" in finding.title
+        assert milestone_file.exists()
+
+    def test_does_not_repeat_same_milestone(self, monkeypatch, tmp_path):
+        log_file, _ = self._patch(monkeypatch, tmp_path)
+        self._write(log_file, [
+            {"timestamp": _iso_days_ago(10), "severities": {}},
+            {"timestamp": _iso_days_ago(1), "severities": {}},
+        ])
+        first = diagnostics.check_clean_streak()
+        assert first is not None
+        second = diagnostics.check_clean_streak()
+        assert second is None
+
+    def test_streak_broken_by_bad_finding(self, monkeypatch, tmp_path):
+        log_file, _ = self._patch(monkeypatch, tmp_path)
+        self._write(log_file, [
+            {"timestamp": _iso_days_ago(10), "severities": {"critical": 1}},
+            {"timestamp": _iso_days_ago(1), "severities": {}},
+        ])
+        # streak only spans ~1 day since the critical finding — too short for any milestone
+        assert diagnostics.check_clean_streak() is None
+
+
 class TestDiskHealth:
     def test_returns_none_when_plenty_of_space(self):
         usage = MagicMock(total=1_000_000_000_000, free=500_000_000_000, used=500_000_000_000)
@@ -310,5 +376,6 @@ def test_get_checks_returns_callables():
     assert "Disk trend" in names
     assert "Duplicate files" in names
     assert "Browser cache" in names
+    assert "Clean streak" in names
     for _, fn in checks:
         assert callable(fn)
