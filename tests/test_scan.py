@@ -511,20 +511,34 @@ class TestLinuxScanner:
 import subprocess as _subprocess
 
 
+def _valid_pro_key() -> str:
+    from datetime import date
+    from errex.license import _sign
+    today = date.today()
+    expiry = f"{today.year + 1}{today.month:02d}"
+    return f"ERREX-PRO-{expiry}-{_sign(f'pro:{expiry}')}"
+
+
 class TestScanCLI:
-    def _run(self, args: list[str]) -> _subprocess.CompletedProcess:
+    def _run(self, args: list[str], tmp_path=None) -> _subprocess.CompletedProcess:
+        import os as _os, json as _json
+        env = {**_os.environ, "ANTHROPIC_API_KEY": ""}
+        if tmp_path is not None:
+            (tmp_path / ".errex.json").write_text(
+                _json.dumps({"license_key": _valid_pro_key()}), encoding="utf-8")
+            env["HOME"] = str(tmp_path)
+            env["PYTHONUSERBASE"] = str(__import__("pathlib").Path.home() / ".local")
         return _subprocess.run(
             [sys.executable, "-m", "errex"] + args,
-            capture_output=True, text=True,
-            env={**__import__("os").environ, "ANTHROPIC_API_KEY": ""},
+            capture_output=True, text=True, env=env,
         )
 
-    def test_scan_no_explain_exits_zero(self):
-        result = self._run(["--scan", "--scan-no-explain"])
+    def test_scan_no_explain_exits_zero(self, tmp_path):
+        result = self._run(["--scan", "--scan-no-explain"], tmp_path)
         assert result.returncode == 0
 
-    def test_scan_severity_flag_accepted(self):
-        result = self._run(["--scan", "--scan-no-explain", "--scan-severity", "critical"])
+    def test_scan_severity_flag_accepted(self, tmp_path):
+        result = self._run(["--scan", "--scan-no-explain", "--scan-severity", "critical"], tmp_path)
         assert result.returncode == 0
 
     def test_scan_help_mentioned(self):
