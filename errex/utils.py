@@ -180,8 +180,10 @@ def notify(title: str, message: str) -> None:
     if platform.system() != "Darwin":
         return
     try:
+        safe_msg = message[:100].replace('"', '\\"').replace("\\", "\\\\")
+        safe_title = title.replace('"', '\\"').replace("\\", "\\\\")
         subprocess.run(
-            ["osascript", "-e", f'display notification "{message[:100]}" with title "{title}"'],
+            ["osascript", "-e", f'display notification "{safe_msg}" with title "{safe_title}"'],
             capture_output=True,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
@@ -209,7 +211,7 @@ def speak(text: str) -> bool:
                 try:
                     subprocess.run(cmd, capture_output=True, timeout=60)
                     return True
-                except FileNotFoundError:
+                except (FileNotFoundError, subprocess.SubprocessError):
                     continue
             return False
         if system == "Windows":

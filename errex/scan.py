@@ -166,19 +166,21 @@ def auto_fix(
             continue
 
         backups: list[dict] = []
+        _backup_warning: str = ""
         if finding.backup_paths:
             try:
                 from .backup import backup_files
                 backups = backup_files(list(finding.backup_paths), reason=f"fix:{finding.id}")
-            except Exception:
-                backups = []
+            except Exception as _bex:
+                _backup_warning = f" [backup failed: {_bex}]"
 
         if finding.fix_fn:
             try:
                 success = finding.fix_fn()
-                results.append(FixResult(finding.id, success, "Applied" if success else "Failed", backups))
+                msg = ("Applied" if success else "Failed") + _backup_warning
+                results.append(FixResult(finding.id, success, msg, backups))
             except Exception as exc:
-                results.append(FixResult(finding.id, False, str(exc), backups))
+                results.append(FixResult(finding.id, False, str(exc) + _backup_warning, backups))
         elif finding.fix_cmd:
             try:
                 proc = subprocess.run(
@@ -187,9 +189,9 @@ def auto_fix(
                 )
                 success = proc.returncode == 0
                 msg = proc.stdout.strip() or proc.stderr.strip() or ("Applied" if success else "Failed")
-                results.append(FixResult(finding.id, success, msg[:200], backups))
+                results.append(FixResult(finding.id, success, (msg + _backup_warning)[:200], backups))
             except Exception as exc:
-                results.append(FixResult(finding.id, False, str(exc), backups))
+                results.append(FixResult(finding.id, False, str(exc) + _backup_warning, backups))
 
     return results
 

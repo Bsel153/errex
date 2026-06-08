@@ -53,7 +53,8 @@ def create_restore_point(reason: str = "errex checkpoint") -> dict:
     if system == "Windows":
         if shutil.which("powershell") is None:
             return {"error": "PowerShell is not available."}
-        ps = f'Checkpoint-Computer -Description "{reason}" -RestorePointType "MODIFY_SETTINGS"'
+        safe_reason = reason.replace('"', "'")
+        ps = f'Checkpoint-Computer -Description "{safe_reason}" -RestorePointType "MODIFY_SETTINGS"'
         out, rc = _run(["powershell", "-Command", ps])
         if rc != 0:
             return {"error": f"Checkpoint-Computer failed: {out or 'System Restore may be disabled'}"}

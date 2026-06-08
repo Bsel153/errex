@@ -140,7 +140,9 @@ def _load_milestone_state() -> dict:
 
 def _save_milestone_state(state: dict) -> None:
     try:
-        _MILESTONE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp = _MILESTONE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp.replace(_MILESTONE_FILE)
     except OSError:
         pass
 

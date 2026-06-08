@@ -145,7 +145,12 @@ def run_welcome_scan() -> None:
 
     try:
         from ._scan_scheduler import log_scan_result
-        log_scan_result(result)
+        from .cloud_sync import sync_scan_summary, is_enabled as _sync_enabled
+        from .config import load_config as _lc
+        _cfg = _lc()
+        entry = log_scan_result(result)
+        if entry and _sync_enabled(_cfg):
+            sync_scan_summary(entry, url=_cfg.get("sync_url"), key=_cfg.get("sync_key"))
     except Exception:
         pass
 

@@ -962,7 +962,7 @@ def main() -> None:
             from .cloud_sync import sync_scan_summary
             sync_scan_summary(entry, url=_sync_url, key=_sync_key)
 
-        if args.output == "json" if hasattr(args, "output") and args.output and args.output.endswith(".json") else False:
+        if getattr(args, "json_output", False):
             print(_json.dumps(result.to_dict(), indent=2))
             return
 
@@ -1037,8 +1037,8 @@ def main() -> None:
 
         # Batch fix by severity
         _auto_fixed_ids: set[str] = set()
-        if args.scan_fix and args.scan_quiet:
-            output.console.print("  [dim]--scan-fix prompts are skipped in quiet mode (unattended scans).[/dim]")
+        if args.scan_fix and _terse:
+            output.console.print("  [dim]--scan-fix prompts are skipped in quiet/simple mode (unattended scans).[/dim]")
         elif args.scan_fix:
             fixable_findings = [f for f in result.findings if f.is_fixable()]
             if not fixable_findings:
