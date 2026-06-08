@@ -1,12 +1,23 @@
 """Scan scheduler — set up automatic periodic scans via system scheduler."""
 from __future__ import annotations
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 
 _SCAN_LOG = Path.home() / ".errex_scan_log.jsonl"
+
+
+def _disk_free_pct() -> float | None:
+    try:
+        usage = shutil.disk_usage(str(Path.home()))
+        if not usage.total:
+            return None
+        return round((usage.free / usage.total) * 100, 2)
+    except OSError:
+        return None
 
 
 def log_scan_result(result) -> None:
@@ -20,6 +31,7 @@ def log_scan_result(result) -> None:
         "categories": {c: sum(1 for f in result.findings if f.category == c)
                        for c in ("security", "misconfiguration", "error", "diagnostic")
                        if any(f.category == c for f in result.findings)},
+        "disk_free_pct": _disk_free_pct(),
     }
     with open(_SCAN_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")

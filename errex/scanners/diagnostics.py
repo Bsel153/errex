@@ -7,6 +7,7 @@ security findings.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import platform as _sys_platform
 import re
@@ -293,12 +294,261 @@ def check_network_health() -> Finding | None:
     )
 
 
+# ── Predictive failure alerts ────────────────────────────────────────────────
+
+_TREND_MIN_SAMPLES = 3
+_TREND_MAX_PROJECTION_DAYS = 30
+
+
+def _disk_free_history() -> list[tuple[datetime.datetime, float]]:
+    """Return [(timestamp, free_pct), ...] from the scan log, oldest first."""
+    from .._scan_scheduler import _SCAN_LOG
+    if not _SCAN_LOG.exists():
+        return []
+    samples: list[tuple[datetime.datetime, float]] = []
+    try:
+        with open(_SCAN_LOG, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                pct = entry.get("disk_free_pct")
+                ts = entry.get("timestamp")
+                if pct is None or not ts:
+                    continue
+                try:
+                    when = datetime.datetime.fromisoformat(ts.rstrip("Z"))
+                except ValueError:
+                    continue
+                samples.append((when, float(pct)))
+    except OSError:
+        return []
+    return samples
+
+
+def check_predictive_disk_failure() -> Finding | None:
+    """
+    Project disk free space forward using recent scan history and warn before
+    the disk actually fills up — not just once it's already critically low.
+    """
+    try:
+        samples = _disk_free_history()
+    except Exception:
+        return None
+    if len(samples) < _TREND_MIN_SAMPLES:
+        return None
+
+    first_ts, first_pct = samples[0]
+    last_ts, last_pct = samples[-1]
+    elapsed_days = (last_ts - first_ts).total_seconds() / 86400
+    if elapsed_days < 1:
+        return None
+
+    decline_per_day = (first_pct - last_pct) / elapsed_days
+    if decline_per_day <= 0.05:
+        return None  # not declining meaningfully — nothing to predict
+
+    days_to_full = last_pct / decline_per_day
+    if days_to_full > _TREND_MAX_PROJECTION_DAYS:
+        return None
+
+    severity = "high" if days_to_full <= 7 else "medium"
+    return Finding(
+        id="diag-predictive-disk-full",
+        severity=severity,
+        category="diagnostic",
+        platform="cross",
+        title=f"Disk projected to fill up in ~{days_to_full:.0f} day(s)",
+        detail=(
+            f"Free space has dropped from {first_pct:.1f}% to {last_pct:.1f}% over the last "
+            f"{elapsed_days:.0f} day(s) of scans (about {decline_per_day:.2f} percentage points/day). "
+            f"At that rate, the disk will be full in roughly {days_to_full:.0f} day(s) — "
+            "well before it becomes an emergency."
+        ),
+        fix_cmd="# Free up space now (Trash, downloads, large files) before it runs out.",
+    )
+
+
+# ── Duplicate file detection ─────────────────────────────────────────────────
+
+_DUP_SCAN_DIRS = ("Downloads", "Documents", "Desktop", "Pictures")
+_DUP_MAX_FILES = 3000
+_DUP_MIN_SIZE = 1024            # ignore tiny files — not worth reporting
+_DUP_MIN_RECLAIMABLE_MB = 50.0
+
+
+def _iter_candidate_files():
+    home = Path.home()
+    for sub in _DUP_SCAN_DIRS:
+        d = home / sub
+        if not d.is_dir():
+            continue
+        try:
+            for p in d.rglob("*"):
+                if p.is_file() and not p.is_symlink():
+                    yield p
+        except OSError:
+            continue
+
+
+def _hash_file(path: Path, chunk_size: int = 65536) -> str | None:
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def check_duplicate_files() -> Finding | None:
+    """Find duplicate files in common user folders and report reclaimable space (report-only)."""
+    by_size: dict[int, list[Path]] = {}
+    count = 0
+    for p in _iter_candidate_files():
+        if count >= _DUP_MAX_FILES:
+            break
+        try:
+            size = p.stat().st_size
+        except OSError:
+            continue
+        if size < _DUP_MIN_SIZE:
+            continue
+        by_size.setdefault(size, []).append(p)
+        count += 1
+
+    groups: list[list[Path]] = []
+    reclaimable = 0
+    for size, paths in by_size.items():
+        if len(paths) < 2:
+            continue
+        by_hash: dict[str, list[Path]] = {}
+        for p in paths:
+            h = _hash_file(p)
+            if h:
+                by_hash.setdefault(h, []).append(p)
+        for dupes in by_hash.values():
+            if len(dupes) > 1:
+                groups.append(dupes)
+                reclaimable += size * (len(dupes) - 1)
+
+    if not groups:
+        return None
+
+    reclaimable_mb = reclaimable / (1024 ** 2)
+    if reclaimable_mb < _DUP_MIN_RECLAIMABLE_MB:
+        return None
+
+    lines = [f"  {len(dupes)}x {dupes[0].name}" for dupes in sorted(groups, key=len, reverse=True)[:5]]
+    severity = "low" if reclaimable_mb < 500 else "medium"
+    return Finding(
+        id="diag-duplicate-files",
+        severity=severity,
+        category="diagnostic",
+        platform="cross",
+        title=f"{len(groups)} group(s) of duplicate files using ~{reclaimable_mb:.0f} MB",
+        detail=(
+            f"Found {len(groups)} group(s) of identical files in Downloads/Documents/Desktop/Pictures "
+            f"that could free up roughly {reclaimable_mb:.0f} MB if the extra copies were removed:\n"
+            + "\n".join(lines)
+        ),
+        fix_cmd="# Review the duplicate groups and delete the extra copies — keep one of each.",
+    )
+
+
+# ── Browser cache / junk ─────────────────────────────────────────────────────
+
+_BROWSER_CACHE_DIRS = {
+    "darwin": [
+        ("Chrome",  "Library/Caches/Google/Chrome"),
+        ("Safari",  "Library/Caches/com.apple.Safari"),
+        ("Firefox", "Library/Caches/Firefox/Profiles"),
+    ],
+    "linux": [
+        ("Chrome",   ".cache/google-chrome"),
+        ("Chromium", ".cache/chromium"),
+        ("Firefox",  ".cache/mozilla/firefox"),
+    ],
+    "windows": [
+        ("Chrome",  "AppData/Local/Google/Chrome/User Data/Default/Cache"),
+        ("Edge",    "AppData/Local/Microsoft/Edge/User Data/Default/Cache"),
+        ("Firefox", "AppData/Local/Mozilla/Firefox/Profiles"),
+    ],
+}
+_BROWSER_JUNK_MIN_MB = 200.0
+
+
+def _dir_size(path: Path, max_entries: int = 20000) -> int:
+    total = 0
+    count = 0
+    try:
+        for p in path.rglob("*"):
+            count += 1
+            if count > max_entries:
+                break
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def check_browser_junk() -> Finding | None:
+    """Report how much space browser caches are using (report-only — never deletes anything)."""
+    plat = _sys_platform.system().lower()
+    targets = _BROWSER_CACHE_DIRS.get(plat, [])
+    home = Path.home()
+
+    found: list[tuple[str, int]] = []
+    total_bytes = 0
+    for name, rel in targets:
+        d = home / rel
+        if not d.is_dir():
+            continue
+        size = _dir_size(d)
+        if size > 10 * 1024 * 1024:
+            found.append((name, size))
+            total_bytes += size
+
+    if not found:
+        return None
+    total_mb = total_bytes / (1024 ** 2)
+    if total_mb < _BROWSER_JUNK_MIN_MB:
+        return None
+
+    lines = [f"  {name}: ~{size / (1024 ** 2):.0f} MB" for name, size in found]
+    return Finding(
+        id="diag-browser-cache",
+        severity="low",
+        category="diagnostic",
+        platform="cross",
+        title=f"Browser caches are using ~{total_mb:.0f} MB",
+        detail=(
+            "Browser cache/temp data found:\n" + "\n".join(lines) +
+            "\n\nClearing this won't touch bookmarks, passwords, or history — "
+            "just temporary files browsers rebuild automatically."
+        ),
+        fix_cmd="# Clear cache from each browser's Settings → Privacy → Clear browsing data.",
+    )
+
+
 def get_checks() -> list[tuple[str, callable]]:
     return [
-        ("Disk health",     check_disk_health),
-        ("Startup load",    check_startup_items),
-        ("Memory pressure", check_memory_pressure),
-        ("Network health",  check_network_health),
+        ("Disk health",       check_disk_health),
+        ("Startup load",      check_startup_items),
+        ("Memory pressure",   check_memory_pressure),
+        ("Network health",    check_network_health),
+        ("Disk trend",        check_predictive_disk_failure),
+        ("Duplicate files",   check_duplicate_files),
+        ("Browser cache",     check_browser_junk),
     ]
 
 
@@ -323,14 +573,17 @@ def _save_device_history(history: dict) -> None:
 
 def check_offline_devices(current_devices: list[dict]) -> list[Finding]:
     """
-    Compare the devices seen in this scan to ones seen in previous scans and
-    flag any well-established device (seen _OFFLINE_AFTER_SCANS+ times before)
-    that has gone missing.
+    Compare the devices seen in this scan to ones seen in previous scans and flag:
+      - any well-established device (seen _OFFLINE_AFTER_SCANS+ times before) that
+        has gone missing ("offline"), and
+      - any device that has never been seen before, once a baseline of previous
+        scans exists ("unauthorized device" alert — a new device joined the LAN).
 
     Updates and persists the device history as a side effect.
     """
     now = datetime.datetime.utcnow().isoformat() + "Z"
     history = _load_device_history()
+    has_baseline = bool(history)  # don't alert on "new" devices during the very first scan
     current_ips = {d["ip"] for d in current_devices if d.get("ip")}
 
     findings: list[Finding] = []
@@ -361,6 +614,23 @@ def check_offline_devices(current_devices: list[dict]) -> list[Finding]:
         ip = d.get("ip")
         if not ip:
             continue
+        record = history.get(ip)
+        if record is None and has_baseline:
+            name = d.get("hostname") or d.get("name") or ip
+            findings.append(Finding(
+                id=f"diag-device-new-{ip.replace('.', '_')}",
+                severity="low",
+                category="security",
+                platform="network",
+                title=f"New device joined the network: '{name}' ({ip})",
+                detail=(
+                    f"'{name}' at {ip} has not been seen on any previous scan of this network. "
+                    "If you don't recognize it, it could be a guest's device, a new gadget — "
+                    "or someone unauthorized on your Wi-Fi."
+                ),
+                fix_cmd=f"# If you don't recognize '{name}', check your router's device list and change your Wi-Fi password if needed.",
+            ))
+
         record = history.setdefault(ip, {"seen_count": 0})
         record["seen_count"] = record.get("seen_count", 0) + 1
         record["last_seen"] = now

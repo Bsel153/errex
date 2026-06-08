@@ -164,6 +164,141 @@ class TestOfflineDeviceDetection:
         history = diagnostics._load_device_history()
         assert history["10.0.0.7"]["status"] == "online"
 
+    def test_no_unauthorized_alert_on_first_ever_scan(self, monkeypatch, tmp_path):
+        self._patch_history(monkeypatch, tmp_path)
+        findings = diagnostics.check_offline_devices([
+            {"ip": "10.0.0.5", "hostname": "tv"},
+            {"ip": "10.0.0.6", "hostname": "speaker"},
+        ])
+        assert findings == []
+
+    def test_flags_unrecognized_new_device(self, monkeypatch, tmp_path):
+        self._patch_history(monkeypatch, tmp_path)
+        known = {"ip": "10.0.0.5", "hostname": "tv"}
+        diagnostics.check_offline_devices([known])
+
+        intruder = {"ip": "10.0.0.99", "hostname": "unknown-device"}
+        findings = diagnostics.check_offline_devices([known, intruder])
+        new_findings = [f for f in findings if f.id.startswith("diag-device-new-")]
+        assert len(new_findings) == 1
+        assert new_findings[0].id == "diag-device-new-10_0_0_99"
+        assert new_findings[0].category == "security"
+        assert "unknown-device" in new_findings[0].title
+
+        # Once seen, it shouldn't be re-flagged as "new" on the next scan
+        again = diagnostics.check_offline_devices([known, intruder])
+        assert all(not f.id.startswith("diag-device-new-") for f in again)
+
+
+class TestPredictiveDiskFailure:
+    def _patch_log(self, monkeypatch, tmp_path):
+        log_file = tmp_path / "scan_log.jsonl"
+        monkeypatch.setattr("errex._scan_scheduler._SCAN_LOG", log_file)
+        return log_file
+
+    def _write_samples(self, log_file, samples):
+        import json as _json
+        with open(log_file, "w", encoding="utf-8") as f:
+            for ts, pct in samples:
+                f.write(_json.dumps({"timestamp": ts, "disk_free_pct": pct}) + "\n")
+
+    def test_returns_none_with_too_few_samples(self, monkeypatch, tmp_path):
+        log_file = self._patch_log(monkeypatch, tmp_path)
+        self._write_samples(log_file, [("2026-06-01T00:00:00Z", 50.0)])
+        assert diagnostics.check_predictive_disk_failure() is None
+
+    def test_returns_none_when_space_is_stable(self, monkeypatch, tmp_path):
+        log_file = self._patch_log(monkeypatch, tmp_path)
+        self._write_samples(log_file, [
+            ("2026-06-01T00:00:00Z", 50.0),
+            ("2026-06-04T00:00:00Z", 50.0),
+            ("2026-06-08T00:00:00Z", 49.9),
+        ])
+        assert diagnostics.check_predictive_disk_failure() is None
+
+    def test_flags_rapid_decline_projected_to_fill_soon(self, monkeypatch, tmp_path):
+        log_file = self._patch_log(monkeypatch, tmp_path)
+        self._write_samples(log_file, [
+            ("2026-06-01T00:00:00Z", 40.0),
+            ("2026-06-04T00:00:00Z", 25.0),
+            ("2026-06-08T00:00:00Z", 12.0),
+        ])
+        finding = diagnostics.check_predictive_disk_failure()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-predictive-disk-full"
+        assert finding.category == "diagnostic"
+        assert finding.severity in ("high", "medium")
+
+    def test_returns_none_when_decline_too_slow_to_matter(self, monkeypatch, tmp_path):
+        log_file = self._patch_log(monkeypatch, tmp_path)
+        self._write_samples(log_file, [
+            ("2026-01-01T00:00:00Z", 80.0),
+            ("2026-03-01T00:00:00Z", 78.0),
+            ("2026-06-01T00:00:00Z", 76.0),
+        ])
+        # declining, but so slowly the projection is far beyond the warning window
+        assert diagnostics.check_predictive_disk_failure() is None
+
+    def test_returns_none_without_log_file(self, monkeypatch, tmp_path):
+        self._patch_log(monkeypatch, tmp_path)
+        assert diagnostics.check_predictive_disk_failure() is None
+
+
+class TestDuplicateFiles:
+    def test_returns_none_with_no_scan_dirs(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        assert diagnostics.check_duplicate_files() is None
+
+    def test_flags_large_duplicate_groups(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        downloads = tmp_path / "Downloads"
+        downloads.mkdir()
+        payload = b"x" * (30 * 1024 * 1024)  # 30 MB
+        for name in ("movie.mp4", "movie (copy).mp4", "movie (copy 2).mp4"):
+            (downloads / name).write_bytes(payload)
+
+        finding = diagnostics.check_duplicate_files()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-duplicate-files"
+        assert finding.category == "diagnostic"
+        assert "MB" in finding.title
+
+    def test_ignores_distinct_files_of_same_size(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        downloads = tmp_path / "Downloads"
+        downloads.mkdir()
+        (downloads / "a.bin").write_bytes(b"a" * (60 * 1024))
+        (downloads / "b.bin").write_bytes(b"b" * (60 * 1024))
+        assert diagnostics.check_duplicate_files() is None
+
+
+class TestBrowserJunk:
+    def test_returns_none_when_no_cache_dirs_exist(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setattr(diagnostics._sys_platform, "system", lambda: "Linux")
+        assert diagnostics.check_browser_junk() is None
+
+    def test_flags_large_caches(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setattr(diagnostics._sys_platform, "system", lambda: "Linux")
+        cache_dir = tmp_path / ".cache" / "google-chrome"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "blob").write_bytes(b"x" * (250 * 1024 * 1024))
+
+        finding = diagnostics.check_browser_junk()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-browser-cache"
+        assert finding.severity == "low"
+        assert "Chrome" in finding.detail
+
+    def test_returns_none_for_small_caches(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(diagnostics.Path, "home", staticmethod(lambda: tmp_path))
+        monkeypatch.setattr(diagnostics._sys_platform, "system", lambda: "Linux")
+        cache_dir = tmp_path / ".cache" / "google-chrome"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "blob").write_bytes(b"x" * (5 * 1024 * 1024))
+        assert diagnostics.check_browser_junk() is None
+
 
 def test_get_checks_returns_callables():
     checks = diagnostics.get_checks()
@@ -172,5 +307,8 @@ def test_get_checks_returns_callables():
     assert "Startup load" in names
     assert "Memory pressure" in names
     assert "Network health" in names
+    assert "Disk trend" in names
+    assert "Duplicate files" in names
+    assert "Browser cache" in names
     for _, fn in checks:
         assert callable(fn)
