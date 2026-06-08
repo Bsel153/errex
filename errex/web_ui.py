@@ -79,7 +79,7 @@ _SETUP_HTML = '''<!DOCTYPE html>
 
     <div class="hint">
       Get a free Anthropic API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
-      Get errex Pro at <a href="https://errex.dev/pro" target="_blank">errex.dev/pro</a>
+      Get errex Pro at <a href="https://errex.roguehometech.com/pro" target="_blank">errex.roguehometech.com/pro</a>
     </div>
   </div>
   <script>
@@ -713,7 +713,7 @@ HTML = r"""<!DOCTYPE html>
   fetch('/api/license').then(r=>r.json()).then(d=>{
     const b = document.getElementById('license-badge');
     if(d.pro) b.innerHTML='<span style="background:#3d9970;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-right:8px">PRO</span>';
-    else b.innerHTML='<a href="https://errex.dev/pro" target="_blank" style="color:#EE0000;font-size:11px;margin-right:8px">Upgrade to Pro</a>';
+    else b.innerHTML='<a href="https://errex.roguehometech.com/pro" target="_blank" style="color:#EE0000;font-size:11px;margin-right:8px">Upgrade to Pro</a>';
   }).catch(()=>{});
 
   function toggleTheme() {

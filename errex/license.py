@@ -100,7 +100,7 @@ def require_pro(feature: str) -> None:
     Console().print(Panel(
         f"[bold]--{feature.replace('_', '-')}[/bold] requires [bold yellow]errex Pro[/bold yellow].\n\n"
         "  Activate:  [cyan]errex --activate YOUR-LICENSE-KEY[/cyan]\n"
-        "  Get a key: [cyan]https://errex.dev/pro[/cyan]  ($9/mo or $79/year)",
+        "  Get a key: [cyan]https://errex.roguehometech.com/pro[/cyan]  ($9/mo or $79/year)",
         title="[yellow]errex Pro required[/yellow]",
         border_style="yellow",
     ))
@@ -114,10 +114,10 @@ def show_license_status() -> None:
     info = get_license()
     if info is None:
         c.print("\n  [dim]No license activated.[/dim]")
-        c.print("  Get errex Pro at [cyan]https://errex.dev/pro[/cyan]\n")
+        c.print("  Get errex Pro at [cyan]https://errex.roguehometech.com/pro[/cyan]\n")
         return
     if info.get("expired"):
         c.print(f"\n  [red]License expired[/red] — tier: {info['tier']}, expired: {info['expiry'][:4]}/{info['expiry'][4:]}")
-        c.print("  Renew at [cyan]https://errex.dev/pro[/cyan]\n")
+        c.print("  Renew at [cyan]https://errex.roguehometech.com/pro[/cyan]\n")
     else:
         c.print(f"\n  [green]✓ errex {info['tier'].capitalize()}[/green] — active until {info['expiry'][:4]}/{info['expiry'][4:]}\n")
