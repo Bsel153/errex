@@ -990,7 +990,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
         from .scan import detect_platform, SCAN_EXPLAIN_PROMPT
-        from .scanners import cve as _cve
+        from .scanners import cve as _cve, diagnostics as _diag
 
         plat = detect_platform()
         checks = []
@@ -1001,6 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
             from .scanners import windows as _pl  # type: ignore[no-redef]
             checks.extend(_pl.get_checks())
         checks.append(("Python Package CVEs", _cve.check_python_packages))
+        checks.extend(_diag.get_checks())
         total = len(checks) + (1 if include_network else 0)
 
         self._sse({"type": "start", "platform": plat, "total": total})

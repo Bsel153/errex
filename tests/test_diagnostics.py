@@ -58,6 +58,63 @@ class TestStartupItems:
             assert diagnostics.check_startup_items() is None
 
 
+class TestMemoryPressure:
+    def test_returns_none_for_normal_usage(self):
+        with patch("errex.scanners.diagnostics._sys_platform.system", return_value="Linux"), \
+             patch("errex.scanners.diagnostics._linux_memory", return_value=(60.0, 0.0)):
+            assert diagnostics.check_memory_pressure() is None
+
+    def test_flags_high_memory_usage(self):
+        with patch("errex.scanners.diagnostics._sys_platform.system", return_value="Linux"), \
+             patch("errex.scanners.diagnostics._linux_memory", return_value=(92.0, 0.0)):
+            finding = diagnostics.check_memory_pressure()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-memory-pressure"
+        assert finding.category == "diagnostic"
+        assert finding.severity == "medium"
+
+    def test_flags_critical_memory_and_swap(self):
+        with patch("errex.scanners.diagnostics._sys_platform.system", return_value="Linux"), \
+             patch("errex.scanners.diagnostics._linux_memory", return_value=(97.0, 5000.0)):
+            finding = diagnostics.check_memory_pressure()
+        assert finding.severity == "high"
+        assert "swapped" in finding.detail
+
+    def test_returns_none_when_stats_unavailable(self):
+        with patch("errex.scanners.diagnostics._sys_platform.system", return_value="Linux"), \
+             patch("errex.scanners.diagnostics._linux_memory", return_value=None):
+            assert diagnostics.check_memory_pressure() is None
+
+    def test_returns_none_on_exception(self):
+        with patch("errex.scanners.diagnostics._sys_platform.system", side_effect=RuntimeError):
+            assert diagnostics.check_memory_pressure() is None
+
+
+class TestNetworkHealth:
+    def test_returns_none_for_healthy_connection(self):
+        with patch("errex.scanners.diagnostics._ping", return_value=(0.0, 20.0)):
+            assert diagnostics.check_network_health() is None
+
+    def test_flags_high_packet_loss(self):
+        with patch("errex.scanners.diagnostics._ping", return_value=(60.0, 30.0)):
+            finding = diagnostics.check_network_health()
+        assert isinstance(finding, Finding)
+        assert finding.id == "diag-network-health"
+        assert finding.severity == "high"
+        assert "loss" in finding.title
+
+    def test_flags_high_latency(self):
+        with patch("errex.scanners.diagnostics._ping", return_value=(0.0, 250.0)):
+            finding = diagnostics.check_network_health()
+        assert isinstance(finding, Finding)
+        assert finding.severity == "medium"
+        assert "latency" in finding.title
+
+    def test_returns_none_when_ping_unavailable(self):
+        with patch("errex.scanners.diagnostics._ping", return_value=(None, None)):
+            assert diagnostics.check_network_health() is None
+
+
 class TestOfflineDeviceDetection:
     def _patch_history(self, monkeypatch, tmp_path):
         history_file = tmp_path / "devices.json"
@@ -113,5 +170,7 @@ def test_get_checks_returns_callables():
     names = [name for name, _ in checks]
     assert "Disk health" in names
     assert "Startup load" in names
+    assert "Memory pressure" in names
+    assert "Network health" in names
     for _, fn in checks:
         assert callable(fn)

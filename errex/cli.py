@@ -161,6 +161,8 @@ def main() -> None:
                         help="prompt to apply safe fixes after scanning (use with --scan)")
     parser.add_argument("--scan-no-explain", action="store_true", dest="scan_no_explain",
                         help="skip Claude explanations in --scan (faster, no API key needed)")
+    parser.add_argument("--scan-quiet", action="store_true", dest="scan_quiet",
+                        help="only print a one-line summary plus critical/high findings (use with --scan, ideal for scheduled scans)")
     parser.add_argument("--scan-malware", nargs="?", const="~", metavar="PATH",
                         dest="scan_malware",
                         help="run malware scan (heuristics + ClamAV if installed) on PATH (default: home dir)")
@@ -807,8 +809,9 @@ def main() -> None:
             output.console.print("  [green]✔ No issues found.[/green]\n")
             return
 
-        # Display findings grouped by severity
-        for severity in SEVERITIES:
+        # Display findings grouped by severity (quiet mode: critical/high only, one line each)
+        _shown_severities = ("critical", "high") if args.scan_quiet else SEVERITIES
+        for severity in _shown_severities:
             for finding in result.findings:
                 if finding.severity != severity:
                     continue
@@ -816,6 +819,8 @@ def main() -> None:
                 output.console.print(
                     f"\n  {icon} [bold]{severity.upper()}[/bold]  {finding.title}"
                 )
+                if args.scan_quiet:
+                    continue
                 for line in finding.detail.splitlines()[:5]:
                     output.console.print(f"     [dim]{line}[/dim]")
                 if finding.fix_cmd:
@@ -827,8 +832,8 @@ def main() -> None:
             f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
         )
 
-        # Explain with Claude
-        if not args.scan_no_explain:
+        # Explain with Claude (skipped in quiet mode — scheduled scans don't need streamed prose)
+        if not args.scan_no_explain and not args.scan_quiet:
             api_key = _os.environ.get("ANTHROPIC_API_KEY")
             if api_key:
                 output.console.print("  [bold]Explanations[/bold] (Claude)\n")
@@ -847,7 +852,9 @@ def main() -> None:
 
         # Batch fix by severity
         _auto_fixed_ids: set[str] = set()
-        if args.scan_fix:
+        if args.scan_fix and args.scan_quiet:
+            output.console.print("  [dim]--scan-fix prompts are skipped in quiet mode (unattended scans).[/dim]")
+        elif args.scan_fix:
             fixable_findings = [f for f in result.findings if f.is_fixable()]
             if not fixable_findings:
                 output.console.print("  No auto-fixable issues found.\n")

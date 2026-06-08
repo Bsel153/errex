@@ -541,6 +541,11 @@ class TestScanCLI:
         result = self._run(["--scan", "--scan-no-explain", "--scan-severity", "critical"], tmp_path)
         assert result.returncode == 0
 
+    def test_scan_quiet_flag_accepted(self, tmp_path):
+        result = self._run(["--scan", "--scan-no-explain", "--scan-quiet"], tmp_path)
+        assert result.returncode == 0
+
     def test_scan_help_mentioned(self):
         result = self._run(["--help"])
         assert "scan" in result.stdout.lower()
+        assert "--scan-quiet" in result.stdout
