@@ -189,6 +189,7 @@ def check_auto_update() -> Finding | None:
         detail="macOS is not checking for security updates. Vulnerabilities may go unpatched.",
         fix_cmd="defaults write com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true",
         fix_fn=lambda: _fix(["defaults", "write", "com.apple.SoftwareUpdate", "AutomaticCheckEnabled", "-bool", "true"]),
+        backup_paths=("/Library/Preferences/com.apple.SoftwareUpdate.plist",),
     )
 
 

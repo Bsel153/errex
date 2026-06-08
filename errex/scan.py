@@ -165,12 +165,20 @@ def auto_fix(
             results.append(FixResult(finding.id, True, f"Would run: {desc}"))
             continue
 
+        backups: list[dict] = []
+        if finding.backup_paths:
+            try:
+                from .backup import backup_files
+                backups = backup_files(list(finding.backup_paths), reason=f"fix:{finding.id}")
+            except Exception:
+                backups = []
+
         if finding.fix_fn:
             try:
                 success = finding.fix_fn()
-                results.append(FixResult(finding.id, success, "Applied" if success else "Failed"))
+                results.append(FixResult(finding.id, success, "Applied" if success else "Failed", backups))
             except Exception as exc:
-                results.append(FixResult(finding.id, False, str(exc)))
+                results.append(FixResult(finding.id, False, str(exc), backups))
         elif finding.fix_cmd:
             try:
                 proc = subprocess.run(
@@ -179,9 +187,9 @@ def auto_fix(
                 )
                 success = proc.returncode == 0
                 msg = proc.stdout.strip() or proc.stderr.strip() or ("Applied" if success else "Failed")
-                results.append(FixResult(finding.id, success, msg[:200]))
+                results.append(FixResult(finding.id, success, msg[:200], backups))
             except Exception as exc:
-                results.append(FixResult(finding.id, False, str(exc)))
+                results.append(FixResult(finding.id, False, str(exc), backups))
 
     return results
 

@@ -194,6 +194,10 @@ def main() -> None:
                         help="add a tech note to a ticket (use with --note \"text\")")
     parser.add_argument("--note", metavar="TEXT", dest="note_text",
                         help="note text to attach (use with --ticket-note)")
+    parser.add_argument("--backups", action="store_true",
+                        help="list recent auto-fix backups (files errex copied before modifying them)")
+    parser.add_argument("--restore-backup", metavar="PATH", dest="restore_backup",
+                        help="restore a backed-up file to its original location (path from --backups)")
     # ── Discord / GitHub integration ────────────────────────────────────────────
     parser.add_argument("--discord-webhook", metavar="URL", dest="discord_webhook",
                         help="Discord webhook URL for scan notifications (or set $ERREX_DISCORD_WEBHOOK)")
@@ -455,6 +459,28 @@ def main() -> None:
         output.console.print(f"  [dim]\"{note_text}\"[/dim]")
         return
 
+    if getattr(args, "backups", False):
+        from .backup import list_backups
+        records = list_backups()
+        if not records:
+            output.console.print("[dim]No auto-fix backups yet. errex copies files here before changing them.[/dim]")
+            return
+        output.console.print(f"[bold]{len(records)} most recent backup(s):[/bold]\n")
+        for r in records:
+            output.console.print(f"  [cyan]{r['original']}[/cyan]")
+            output.console.print(f"    [dim]→ {r['backup']}  ({r['timestamp']})[/dim]")
+            output.console.print(f"    [dim]restore: errex --restore-backup \"{r['backup']}\"[/dim]\n")
+        return
+
+    if getattr(args, "restore_backup", None):
+        from .backup import restore_backup
+        resp = restore_backup(args.restore_backup)
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Restored to {resp['restored_to']}[/green]")
+        return
+
     # First-run scan (once only, no API key needed)
     _skip_first_scan = (
         args.scan or args.setup
@@ -469,6 +495,8 @@ def main() -> None:
         or getattr(args, "ticket_snooze", None)
         or getattr(args, "ticket_reopen", None)
         or getattr(args, "ticket_note", None)
+        or getattr(args, "backups", False)
+        or getattr(args, "restore_backup", None)
         or getattr(args, "create_shortcut", False)
         or args.history is not None or args.stats
         or args.list_profiles or args.completion or args.doctor
@@ -925,6 +953,10 @@ def main() -> None:
                         for r in fix_results:
                             mark = "[green]✔[/green]" if r.success else "[red]✗[/red]"
                             output.console.print(f"  {mark} {r.message}")
+                            for b in r.backups:
+                                output.console.print(
+                                    f"     [dim]↳ backed up {b['original']} → {b['backup']}[/dim]"
+                                )
                             if r.success:
                                 _auto_fixed_ids.add(r.finding_id)
                                 fixed_finding = _findings_by_id.get(r.finding_id)

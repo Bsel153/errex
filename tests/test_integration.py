@@ -160,6 +160,19 @@ def test_history_no_history(tmp_path):
     assert "No history" in r.stdout
 
 
+def test_backups_no_backups_yet(tmp_path):
+    r = run(["--backups"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+    assert "No auto-fix backups" in r.stdout
+
+
+def test_restore_backup_unknown_path(tmp_path):
+    r = run(["--restore-backup", "/no/such/backup.txt"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode != 0
+    assert "No backup record" in (r.stdout + r.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Config / profiles with no config file
 # ---------------------------------------------------------------------------

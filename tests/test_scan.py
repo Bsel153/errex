@@ -399,6 +399,30 @@ class TestOrchestrator:
         results = auto_fix([f])
         assert results[0].success is True
 
+    def test_auto_fix_backs_up_files_before_fix_fn(self, tmp_path):
+        target = tmp_path / "config.txt"
+        target.write_text("original")
+        fake_record = {"original": str(target), "backup": str(tmp_path / "bk" / "config.txt"),
+                       "timestamp": "2026-01-01T00:00:00Z", "reason": "fix:id"}
+        f = Finding("id", "medium", "misconfiguration", "macos", "T", "D",
+                    fix_fn=lambda: True, backup_paths=(str(target),))
+        with patch("errex.backup.backup_files", return_value=[fake_record]) as mock_backup:
+            results = auto_fix([f])
+        mock_backup.assert_called_once_with([str(target)], reason="fix:id")
+        assert results[0].backups == [fake_record]
+
+    def test_auto_fix_no_backup_paths_means_no_backups(self):
+        f = Finding("id", "high", "security", "macos", "T", "D", fix_fn=lambda: True)
+        results = auto_fix([f])
+        assert results[0].backups == []
+
+    def test_auto_fix_dry_run_skips_backup(self):
+        f = Finding("id", "high", "security", "macos", "T", "D",
+                    fix_fn=lambda: True, backup_paths=("/tmp/whatever.txt",))
+        with patch("errex.backup.backup_files") as mock_backup:
+            auto_fix([f], dry_run=True)
+        mock_backup.assert_not_called()
+
     def test_progress_callback_called(self):
         calls = []
         def cb(name, done, total):

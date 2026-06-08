@@ -18,6 +18,7 @@ class Finding:
     detail: str
     fix_cmd: str | None = None
     fix_fn: Callable[[], bool] | None = None
+    backup_paths: tuple[str, ...] | None = None
     explanation: str = ""
     cve_ids: list[str] = field(default_factory=list)
 
@@ -66,12 +67,14 @@ class FixResult:
     finding_id: str
     success: bool
     message: str
+    backups: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "finding_id": self.finding_id,
             "success": self.success,
             "message": self.message,
+            "backups": self.backups,
         }
 
 
