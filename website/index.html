@@ -58,11 +58,15 @@
     .pricing{padding:80px 0;background:#1a1a1a;border-top:1px solid #2a2a2a;border-bottom:1px solid #2a2a2a}
     .pricing h2{text-align:center;font-size:2.1rem;margin-bottom:14px;letter-spacing:-1px}
     .pricing > .wrap > p{text-align:center;color:#8a8d90;margin-bottom:50px}
-    .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;max-width:760px;margin:0 auto}
+    .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:24px;max-width:1080px;margin:0 auto}
     .plan{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:14px;padding:34px}
     .plan.pro{border-color:#EE0000;position:relative}
     .plan.pro::before{content:"MOST POPULAR";position:absolute;top:-12px;left:50%;transform:translateX(-50%);
                       background:#EE0000;color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;
+                      padding:4px 14px;border-radius:20px}
+    .plan.priority{border-color:#3d9970;position:relative}
+    .plan.priority::before{content:"WHITE GLOVE";position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+                      background:#3d9970;color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;
                       padding:4px 14px;border-radius:20px}
     .plan h3{font-size:1.3rem;margin-bottom:6px}
     .plan .price{font-size:2.4rem;font-weight:800;font-family:"Red Hat Display",sans-serif;margin:14px 0 4px}
@@ -131,7 +135,8 @@ back to where it should have been assigned.
         <div class="card"><div class="icon">🖥️</div><h3>Beautiful dashboard</h3><p>A local web UI with dark mode, history, stats, and one-click rescans — opens as its own native app, no browser needed.</p></div>
         <div class="card"><div class="icon">🛡️</div><h3>Security scanner</h3><p>Finds CVEs, misconfigurations, exposed secrets, and weak permissions across macOS, Linux, and Windows.</p></div>
         <div class="card"><div class="icon">🦠</div><h3>Malware detection</h3><p>Layered scanning — heuristics, ClamAV integration, and VirusTotal hash lookups — to catch what shouldn't be there.</p></div>
-        <div class="card"><div class="icon">🎫</div><h3>Ticket system</h3><p>Findings become trackable tickets, synced to GitHub Issues and posted to Discord automatically.</p></div>
+        <div class="card"><div class="icon">📈</div><h3>Smart-home diagnostics</h3><p>Predictive disk-failure alerts, memory &amp; network health, duplicate-file and browser-cache cleanup, and offline/unauthorized device detection on your home network.</p></div>
+        <div class="card"><div class="icon">🎫</div><h3>Ticket system</h3><p>Findings become trackable tickets with tech notes, synced to GitHub Issues and posted to Discord automatically.</p></div>
         <div class="card"><div class="icon">⚡</div><h3>Built for the terminal</h3><p>Pipe errors directly from your shell, watch log files live, or generate tests from a stack trace.</p></div>
       </div>
     </div>
@@ -140,10 +145,11 @@ back to where it should have been assigned.
   <section class="pricing" id="pricing">
     <div class="wrap">
       <h2>Simple pricing</h2>
-      <p>Start free. Upgrade when you need the power tools.</p>
+      <p>Start free. Upgrade when you need the power tools — or the white-glove treatment.</p>
       <div class="plans">
         <div class="plan">
-          <h3>Free</h3>
+          <h3>Basic errex</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">For every RHT customer</p>
           <div class="price">$0</div>
           <ul>
             <li>Unlimited error explanations</li>
@@ -154,18 +160,33 @@ back to where it should have been assigned.
           <a href="#download" class="btn btn-secondary">Download free</a>
         </div>
         <div class="plan pro">
-          <h3>Pro</h3>
+          <h3>errex Pro</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">Advanced diagnostics &amp; security</p>
           <div class="price">$9<span>/month</span></div>
           <p style="color:#8a8d90;font-size:13px;margin-top:-6px">or $79/year — save 27%</p>
           <ul>
-            <li>Everything in Free</li>
-            <li>Security &amp; malware scanner</li>
-            <li>Ticket system + GitHub sync</li>
-            <li>Discord notifications</li>
-            <li>Email reports &amp; scheduling</li>
-            <li>File watching, chat mode, code tools</li>
+            <li>Everything in Basic</li>
+            <li>Security, malware &amp; vulnerability scanning</li>
+            <li>Predictive failure alerts (disk, memory, network)</li>
+            <li>Duplicate-file &amp; browser-cache cleanup</li>
+            <li>Offline &amp; unauthorized device alerts</li>
+            <li>Ticket system + tech notes, GitHub &amp; Discord sync</li>
+            <li>Email reports, scan scheduling, file watching, code tools</li>
           </ul>
           <a href="https://gumroad.com/" class="btn btn-primary">Get errex Pro</a>
+        </div>
+        <div class="plan priority">
+          <h3>Pro + RHT Priority</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">Everything, plus a human in your corner</p>
+          <div class="price">$19<span>/month</span></div>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-6px">or $179/year — save 21%</p>
+          <ul>
+            <li>Everything in Pro</li>
+            <li>Priority escalation — jump the queue for human support</li>
+            <li>Monthly proactive report check-ins from RHT</li>
+            <li>A dedicated RHT technician for your account</li>
+          </ul>
+          <a href="https://gumroad.com/" class="btn btn-primary">Get Priority</a>
         </div>
       </div>
     </div>
