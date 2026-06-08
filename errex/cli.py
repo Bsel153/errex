@@ -66,6 +66,8 @@ def _ticket_action(
     github_repo: str | None = None,
     github_token: str | None = None,
     discord_webhook: str | None = None,
+    sync_url: str | None = None,
+    sync_key: str | None = None,
 ) -> None:
     from .tickets import close_ticket, snooze_ticket, reopen_ticket, load_all
     if action == "close":
@@ -84,6 +86,9 @@ def _ticket_action(
         if discord_webhook:
             from .discord_notify import notify_ticket_closed
             notify_ticket_closed(t, webhook_url=discord_webhook)
+        if sync_url or os.environ.get("ERREX_SYNC_URL"):
+            from .cloud_sync import sync_ticket_event
+            sync_ticket_event(t, "closed", url=sync_url, key=sync_key)
     elif action == "snooze":
         t = snooze_ticket(ticket_id, days=snooze_days)
         if not t:
@@ -196,6 +201,10 @@ def main() -> None:
                         help="GitHub token for creating Issues (or set $GITHUB_TOKEN)")
     parser.add_argument("--github-repo", metavar="OWNER/REPO", dest="github_repo",
                         help="GitHub repo to create Issues in (e.g. myorg/myrepo)")
+    parser.add_argument("--sync-url", metavar="URL", dest="sync_url",
+                        help="opt-in: upload scan summaries and ticket events to an RHT backend (or set $ERREX_SYNC_URL)")
+    parser.add_argument("--sync-key", metavar="KEY", dest="sync_key",
+                        help="API key for --sync-url (or set $ERREX_SYNC_KEY)")
     parser.add_argument("--verify", action="store_true",
                         help="after --scan-fix or --fix-apply, re-run to confirm the fix worked")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
@@ -418,7 +427,9 @@ def main() -> None:
                        github_token=getattr(args, "github_token", None) or config.get("github_token"),
                        discord_webhook=(getattr(args, "discord_webhook", None)
                                         or config.get("discord_webhook")
-                                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK")))
+                                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK")),
+                       sync_url=getattr(args, "sync_url", None) or config.get("sync_url"),
+                       sync_key=getattr(args, "sync_key", None) or config.get("sync_key"))
         return
 
     if getattr(args, "ticket_snooze", None):
@@ -818,11 +829,16 @@ def main() -> None:
             progress_cb=_progress,
         )
         output.console.print(" " * 60, end="\r")  # clear progress line
+        _sync_url = getattr(args, "sync_url", None) or config.get("sync_url")
+        _sync_key = getattr(args, "sync_key", None) or config.get("sync_key")
         try:
             from ._scan_scheduler import log_scan_result
-            log_scan_result(result)
+            entry = log_scan_result(result)
         except Exception:
-            pass
+            entry = None
+        if entry and (_sync_url or _os.environ.get("ERREX_SYNC_URL")):
+            from .cloud_sync import sync_scan_summary
+            sync_scan_summary(entry, url=_sync_url, key=_sync_key)
 
         if args.output == "json" if hasattr(args, "output") and args.output and args.output.endswith(".json") else False:
             print(_json.dumps(result.to_dict(), indent=2))
@@ -935,9 +951,12 @@ def main() -> None:
         _disc_hook  = (getattr(args, "discord_webhook", None)
                        or config.get("discord_webhook")
                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK"))
-        if result.findings and (_gh_repo or _disc_hook):
+        _sync_on = bool(_sync_url or _os.environ.get("ERREX_SYNC_URL"))
+        if result.findings and (_gh_repo or _disc_hook or _sync_on):
             from .tickets import create_ticket, find_by_finding_id
             from .discord_notify import notify_new_ticket, notify_scan_summary
+            if _sync_on:
+                from .cloud_sync import sync_ticket_event
             if _gh_repo:
                 from .github_sync import create_issue
             new_tickets = 0
@@ -972,6 +991,8 @@ def main() -> None:
                         output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
                 if _disc_hook:
                     notify_new_ticket(ticket, webhook_url=_disc_hook, github_issue_url=gh_issue_url)
+                if _sync_on:
+                    sync_ticket_event(ticket, "opened", url=_sync_url, key=_sync_key)
             if _disc_hook:
                 from .tickets import get_open_tickets
                 _open = get_open_tickets()

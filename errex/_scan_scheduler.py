@@ -20,8 +20,8 @@ def _disk_free_pct() -> float | None:
         return None
 
 
-def log_scan_result(result) -> None:
-    """Append a scan result summary to the scan log."""
+def log_scan_result(result) -> dict:
+    """Append a scan result summary to the scan log. Returns the logged entry."""
     entry = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "platform": result.platform,
@@ -35,6 +35,7 @@ def log_scan_result(result) -> None:
     }
     with open(_SCAN_LOG, "a") as f:
         f.write(json.dumps(entry) + "\n")
+    return entry
 
 
 def get_last_scan_info() -> dict | None:
