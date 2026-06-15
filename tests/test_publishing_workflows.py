@@ -6,22 +6,25 @@ def _load(path: str) -> dict:
     return yaml.safe_load(Path(path).read_text())
 
 
-def test_pypi_workflow_on_release():
-    wf = _load(".github/workflows/publish-pypi.yml")
-    assert "release" in wf["on"]
+def test_pypi_workflow_on_tag():
+    wf = _load(".github/workflows/publish.yml")
+    triggers = wf[True]  # YAML parses bare `on:` as boolean True
+    assert "push" in triggers
+    assert "v*" in triggers["push"]["tags"]
 
 
-def test_pypi_workflow_has_oidc_permissions():
-    wf = _load(".github/workflows/publish-pypi.yml")
-    publish = wf["jobs"]["publish"]
-    assert publish.get("permissions", {}).get("id-token") == "write"
-
-
-def test_pypi_workflow_uses_trusted_publishing():
-    wf = _load(".github/workflows/publish-pypi.yml")
+def test_pypi_workflow_uses_pypi_publish_action():
+    wf = _load(".github/workflows/publish.yml")
     steps = wf["jobs"]["publish"]["steps"]
     uses = [s.get("uses", "") for s in steps]
     assert any("pypi-publish" in u for u in uses)
+
+
+def test_pypi_workflow_uses_api_token_not_oidc():
+    wf = _load(".github/workflows/publish.yml")
+    steps = wf["jobs"]["publish"]["steps"]
+    publish_step = next(s for s in steps if "pypi-publish" in s.get("uses", ""))
+    assert "PYPI_API_TOKEN" in str(publish_step.get("with", {}).get("password", ""))
 
 
 def test_vscode_workflow_on_release():
