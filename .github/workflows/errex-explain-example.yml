@@ -3,6 +3,9 @@ name: Explain CI failures
 on:
   pull_request:
 
+permissions:
+  pull-requests: write
+
 jobs:
   test:
     runs-on: ubuntu-latest

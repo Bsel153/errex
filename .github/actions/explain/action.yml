@@ -29,7 +29,7 @@ runs:
   steps:
     - name: Install errex
       shell: bash
-      run: pip install errex --quiet
+      run: pip install . --quiet
     - name: Explain error
       id: explain
       shell: bash
