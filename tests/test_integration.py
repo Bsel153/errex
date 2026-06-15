@@ -364,3 +364,72 @@ def test_activate_invalid_key_exits_nonzero(tmp_path):
     r = run(["--activate", "ERREX-PRO-000000-AAAAAAAA"],
             env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
     assert r.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# --no-history flag
+# ---------------------------------------------------------------------------
+
+def test_no_history_flag_is_accepted():
+    r = run(["--no-history", "--explain-exit", "0"])
+    assert "unrecognized" not in r.stderr.lower()
+    assert r.returncode == 0
+
+
+def test_no_history_does_not_write_history_file(tmp_path):
+    run(["--no-history", "--explain-exit", "0"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    history = tmp_path / ".errex_history"
+    assert not history.exists()
+
+
+def test_without_no_history_flag_local_lookup_still_works(tmp_path):
+    r = run(["--explain-exit", "0"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+    assert "Success" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# --offline flag
+# ---------------------------------------------------------------------------
+
+def test_offline_flag_accepted_with_doctor(tmp_path):
+    r = run(["--doctor", "--offline"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                 "ANTHROPIC_API_KEY": ""})
+    combined = r.stdout + r.stderr
+    assert "unrecognized" not in combined.lower()
+
+
+def test_offline_flag_no_traceback(tmp_path):
+    r = run(["--doctor", "--offline"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+                 "ANTHROPIC_API_KEY": ""})
+    assert "Traceback" not in r.stdout
+    assert "Traceback" not in r.stderr
+
+
+def test_explain_exit_works_with_no_history_and_json(tmp_path):
+    r = run(["--no-history", "--explain-exit", "1"],
+            env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Privacy / show-access flags
+# ---------------------------------------------------------------------------
+
+def test_privacy_flag_exits_zero():
+    r = run(["--privacy"])
+    assert r.returncode == 0
+
+
+def test_privacy_flag_mentions_data(tmp_path):
+    r = run(["--privacy"])
+    assert "errex" in r.stdout.lower() or "data" in r.stdout.lower()
+
+
+def test_show_access_flag_exits_zero():
+    r = run(["--show-access"])
+    assert r.returncode == 0

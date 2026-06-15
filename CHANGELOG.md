@@ -2,6 +2,81 @@
 
 All notable changes to errex are documented here.
 
+## [0.23.0] — 2026-06-15
+### Added
+- `--backups`: list auto-fix backups (newest first); files are snapshotted to `~/.errex_backups/` before any fix is applied
+- `--restore-backup PATH`: restore a file from a backup created by auto-fix
+- `--cloud-backup`: copy the backup folder into a detected cloud-sync folder (Dropbox, Google Drive, OneDrive, iCloud)
+- `--restore-point`: create a Time Machine snapshot (macOS), System Restore point (Windows), or timeshift snapshot (Linux) before a large fix
+- `--mascot`: print Rex `(•‿•)` with a context-aware motivational line; shown automatically after scans
+- `--scan-speak`: read scan findings aloud via `say` (macOS), `spd-say`/`espeak` (Linux), or PowerShell (Windows)
+- `--simple`: simplified high-contrast output — fewer colours, no Unicode decoration; good for accessibility
+- `--devices`: list known local network devices with friendly nicknames
+- `--device-rename IP --name NICK`: assign a human-readable name to a network device
+- `--sync-url` / `--sync-key`: opt-in cloud sync of scan summaries and ticket events
+- Health streaks: `--scan-status` now reports consecutive clean days
+- Anniversary alerts: congratulatory findings at 30 / 90 / 180 / 365 days of use
+- Welcome scan: `--setup` triggers a brief health scan on first run
+- Fix confidence scores and desktop notifications when auto-fix is applied
+- Predictive alerts for disk fill rate and error frequency trends
+- Duplicate file and stale browser cache detection in the scanner
+- Unauthorized device alerts for new devices seen on the network
+- Large-text / dark mode toggles in the web dashboard
+
+### Fixed
+- `notify()` now escapes `"` and `\` before osascript interpolation (command injection fix)
+- CI action now installs from local source (`pip install .`) instead of stale PyPI package
+- 8 correctness bugs across backup, cloud sync, restore points, and mascot modules
+
+## [0.22.0] — 2026-06
+### Added
+- `--tickets`: list open scan tickets; `--ticket-close`, `--ticket-snooze`, `--ticket-reopen`, `--ticket-note` manage lifecycle
+- `--discord-webhook URL`: post scan summaries and explanations to a Discord channel
+- `--github-token` / `--github-repo`: push tickets to GitHub Issues
+- `--scan-malware [PATH]`: layered malware detection — heuristics + ClamAV + VirusTotal hash lookup
+- `--check-hash FILE` / `--vt-api-key KEY`: check a file's SHA-256 against VirusTotal
+- `--email-report EMAIL`: HTML health digest sent via SMTP; `--smtp-host`, `--smtp-port`, `--email-period`
+- `--scan-schedule daily|weekly|monthly`: register background scans
+- `--mcp`: stdio JSON-RPC server for Claude Desktop integration
+- GitHub Actions composite action (`.github/actions/explain/`) for CI pipeline integration
+- VS Code extension (`extensions/vscode/`) with `explainSelection` and `explainFromClipboard` commands
+- 20 new error patterns: Rust, Go, Docker, pip, npm, shell, database (109 patterns total)
+- Linux security scanner: firewall, SSH config, world-writable files, fail2ban, sudo rules
+- One-command installer script and desktop shortcut creation
+
+### Fixed
+- 10 correctness, security, and reliability bugs from code review
+- 3 ticket/Discord/GitHub integration bugs
+
+## [0.21.0] — 2026-05
+### Added
+- macOS, Windows, and IoT security scanner; web UI Scan tab
+- Docker image, systemd service file, nginx config; `--port` flag
+- `--tls` / `--cert` / `--key`: HTTPS with self-signed or custom certificates
+- `--privacy`: full disclosure of what errex reads and stores
+- `--show-access`: lists files and env vars errex can access
+- `--tunnel`: Cloudflare tunnel for temporary public access with a QR code
+- `--auth USER:PASS`: HTTP Basic Auth for the web UI
+- `--host ADDR`: bind the web server to a specific address
+- Stats tab in the web dashboard (`/stats` endpoint)
+- `--digest` / `--digest-since` / `--digest-webhook`: weekly error digest with webhook delivery
+- `--open-ticket`, `--rht-username`, `--rht-password`, `--rht-severity`, `--rht-product`, `--rht-version`: Red Hat Customer Portal ticket creation
+
+## [0.20.0] — 2026-04
+### Added
+- Expanded `--doctor` health dashboard: API key, connectivity, config, history, version, system checks
+- Enhanced `--fix-apply` for code files: shows diff before applying; `--yes` / `-y` to auto-confirm
+
+## [0.19.0] — 2026-03
+### Added
+- Response cache (`~/.errex_response_cache.json`, 30-day TTL); `--no-cache` to bypass; `--clear-cache` to wipe
+- `--fix-apply`: get a fix command from Claude and run it after confirmation
+- 65+ offline patterns built in; `--list-patterns` shows them in a table
+- Overhauled web UI: streaming tokens, history sidebar, source badge (⚡ / 📦 / 🤖), Full/Brief tabs
+- 48-test integration suite invoking `python -m errex` as a real subprocess
+- `errex.py` + `web.py` refactored into `errex/` package with 15+ modules
+- Auto-publish to PyPI on `v*` tag push; `workflow_dispatch` trigger for manual releases
+
 ## [0.18.0] — 2026-05-28
 ### Added
 - `--redact`: auto-strip API keys, tokens, and passwords from error text before sending to Claude (Anthropic, GitHub, AWS, JWT, Bearer, password/secret/token fields)
