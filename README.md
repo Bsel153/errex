@@ -176,6 +176,102 @@ errex --list-patterns          # show all 71 built-in patterns in a table
 | `--copy` | Copy the explanation to the clipboard |
 | `--share` | Post the explanation to paste.rs and print a shareable link |
 
+### System health scan
+
+errex can scan your machine for security issues, misconfigurations, and outdated software — no API key needed for the scan itself.
+
+```bash
+errex --scan                 # run a full system scan
+errex --scan --scan-network  # include network device scan
+errex --scan-status          # show last scan result and health streak
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--scan` | Run a full system health scan (logs, configs, CVEs, malware) |
+| `--scan-schedule FREQ` | Schedule automatic scans (`daily`, `weekly`, `monthly`) |
+| `--scan-status` | Show last scan result and current health-streak days |
+| `--scan-network` | Also scan local network devices |
+| `--scan-severity LEVEL` | Only report findings at or above this severity (`low`, `medium`, `high`, `critical`) |
+| `--scan-fix` | Auto-apply safe fixes for scan findings |
+| `--scan-no-explain` | Skip Claude explanations; show findings only |
+| `--scan-quiet` | Suppress all scan output (useful in scripts; check exit code) |
+| `--scan-speak` | Read scan findings aloud via OS text-to-speech |
+| `--scan-malware [PATH]` | Run a malware/hash scan on PATH (default: home directory) |
+| `--check-hash FILE` | Check a file's SHA-256 hash against known-malware databases |
+| `--vt-api-key KEY` | VirusTotal API key for extended hash lookups |
+| `--simple` | Simplified, high-contrast output — fewer colours, larger text; good for accessibility |
+| `--mascot` | Show Rex (errex's mascot) with a context-aware motivational line |
+
+### Scan tickets
+
+Scan findings are tracked as tickets so nothing gets lost between sessions.
+
+| Flag | What it does |
+|------|-------------|
+| `--tickets` | List all open scan tickets |
+| `--ticket-close ID` | Mark a ticket as resolved |
+| `--ticket-snooze ID` | Snooze a ticket (default: 7 days; override with `--snooze-days N`) |
+| `--snooze-days N` | Number of days to snooze (used with `--ticket-snooze`) |
+| `--ticket-reopen ID` | Reopen a previously closed/snoozed ticket |
+| `--ticket-note ID --note TEXT` | Append a note to a ticket |
+
+### Network devices
+
+errex remembers the devices on your local network and lets you give them friendly names.
+
+| Flag | What it does |
+|------|-------------|
+| `--devices` | List all known network devices with their nicknames |
+| `--device-rename IP --name NICK` | Set a friendly nickname for a device (e.g. `--device-rename 10.0.0.5 --name "Living Room TV"`) |
+
+### Backup & restore
+
+Before applying any auto-fix, errex backs up the affected files so you can always roll back.
+
+```bash
+errex --backups               # see all auto-fix backups
+errex --restore-backup PATH   # restore a specific backup
+errex --cloud-backup          # copy backups to a detected cloud-sync folder
+errex --restore-point         # create an OS restore point before a big fix
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--backups` | List all auto-fix backups (newest first) |
+| `--restore-backup PATH` | Restore a file from its backup (PATH is the backup file path shown by `--backups`) |
+| `--cloud-backup` | Copy the backup folder into a detected cloud-sync folder (Dropbox, Google Drive, OneDrive, iCloud) |
+| `--restore-point` | Create an OS-level restore point before fixing: Time Machine snapshot (macOS), System Restore (Windows), or timeshift (Linux) |
+
+### Weekly digest & notifications
+
+| Flag | What it does |
+|------|-------------|
+| `--digest` | Print a summary of errors and fixes from the last 7 days |
+| `--digest-since N` | Override the look-back window to the last N hours |
+| `--discord-webhook URL` | Post the explanation or scan summary to a Discord channel |
+| `--github-token TOKEN` | GitHub token for `--issues` lookups and PR annotations |
+| `--github-repo OWNER/REPO` | GitHub repo to open issues against |
+
+### Cloud sync
+
+| Flag | What it does |
+|------|-------------|
+| `--sync-url URL` | Remote endpoint to sync scan summaries and ticket events |
+| `--sync-key KEY` | API key for the sync endpoint (or set `ERREX_SYNC_KEY` env var) |
+
+### Pro license
+
+```bash
+errex --activate ERREX-PRO-XXXXXX-XXXXXXXX   # activate a Pro license key
+errex --license                               # show current license status
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--activate KEY` | Activate an errex Pro license key |
+| `--license` | Show current license status (free / Pro, expiry, seat) |
+
 ### Setup & config
 
 | Flag | What it does |
@@ -187,7 +283,6 @@ errex --list-patterns          # show all 71 built-in patterns in a table
 | `--setup` | First-run wizard: check API key, detect languages, write config, install shell integration |
 | `--doctor` | Health check: verify API key, connectivity, config, and version |
 | `--completion bash\|zsh` | Print a shell completion script (`source <(errex --completion zsh)`) |
-| `--scan` | Scan common log locations for recent error files and pick one to explain |
 | `--install-shell` | Add `errex-last()` to your shell — run it after any failed command |
 | `--web` | Launch a local web UI at `http://localhost:7337` |
 | `--update` | Check PyPI for a newer version |

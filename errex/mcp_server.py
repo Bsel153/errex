@@ -5,7 +5,7 @@ import io
 import json
 import sys
 
-SERVER_INFO = {"name": "errex", "version": "0.22.0"}
+SERVER_INFO = {"name": "errex", "version": "0.23.0"}
 
 TOOLS = [
     {
