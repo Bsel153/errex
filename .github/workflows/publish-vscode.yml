@@ -27,7 +27,7 @@ jobs:
         run: npm run compile
       - name: Package
         working-directory: extensions/vscode
-        run: npx vsce package --no-dependencies
+        run: npx @vscode/vsce package --no-dependencies
       - name: Upload .vsix
         uses: actions/upload-artifact@v4
         with:
@@ -43,7 +43,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: errex-vsix
+      - name: Check VSCE_PAT
+        id: check-pat
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "::warning::VSCE_PAT secret not configured — skipping VS Code Marketplace publish. Add the secret at Settings > Secrets and variables > Actions."
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
       - name: Publish
-        run: npx vsce publish --packagePath *.vsix
+        if: steps.check-pat.outputs.skip != 'true'
+        run: npx @vscode/vsce publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
