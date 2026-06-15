@@ -180,12 +180,50 @@ def notify(title: str, message: str) -> None:
     if platform.system() != "Darwin":
         return
     try:
+        safe_msg = message[:100].replace('"', '\\"').replace("\\", "\\\\")
+        safe_title = title.replace('"', '\\"').replace("\\", "\\\\")
         subprocess.run(
-            ["osascript", "-e", f'display notification "{message[:100]}" with title "{title}"'],
+            ["osascript", "-e", f'display notification "{safe_msg}" with title "{safe_title}"'],
             capture_output=True,
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
+
+
+def speak(text: str) -> bool:
+    """
+    Read *text* aloud using the OS's built-in text-to-speech.
+
+    Best-effort and silent on unsupported platforms / missing TTS tools —
+    accessibility should never block or crash a scan. Returns True if a
+    TTS command was launched successfully.
+    """
+    text = text.strip()
+    if not text:
+        return False
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            subprocess.run(["say", text], capture_output=True, timeout=60)
+            return True
+        if system == "Linux":
+            for cmd in (["spd-say", text], ["espeak", text]):
+                try:
+                    subprocess.run(cmd, capture_output=True, timeout=60)
+                    return True
+                except (FileNotFoundError, subprocess.SubprocessError):
+                    continue
+            return False
+        if system == "Windows":
+            ps = ("Add-Type -AssemblyName System.Speech; "
+                  "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+                  ".Speak([Console]::In.ReadToEnd())")
+            subprocess.run(["powershell", "-Command", ps],
+                           input=text, capture_output=True, text=True, timeout=60)
+            return True
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+    return False
 
 
 def check_for_update() -> None:
@@ -201,7 +239,8 @@ def check_for_update() -> None:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             latest = json.loads(resp.read())["info"]["version"]
-        if latest != current:
+        from packaging.version import Version
+        if Version(latest) > Version(current):
             output.console.print(
                 f"\n[yellow]Update available:[/yellow] {current} → [bold]{latest}[/bold]  "
                 f"[dim]pip install --upgrade errex[/dim]\n"

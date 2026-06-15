@@ -21,6 +21,128 @@ from . import _constants
 from .patterns import match_pattern
 
 _HISTORY_FILE = Path.home() / ".errex_history"
+_CONFIG_FILE = Path.home() / ".errex.json"
+
+# ─── Setup page ───────────────────────────────────────────────────────────────
+
+_SETUP_HTML = '''<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>errex — Setup</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{background:#151515;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}
+    .card{background:#1f1f1f;border:1px solid #333;border-radius:14px;padding:44px;max-width:480px;width:100%}
+    .logo{color:#EE0000;font-size:2.2rem;font-weight:700;letter-spacing:-1px;margin-bottom:6px}
+    .tagline{color:#8a8d90;font-size:14px;margin-bottom:36px}
+    label{display:block;font-size:13px;color:#aaa;margin-bottom:6px;font-weight:500}
+    .field{margin-bottom:20px}
+    input{width:100%;background:#111;border:1px solid #444;border-radius:7px;color:#e0e0e0;
+          padding:11px 14px;font-size:14px;font-family:monospace;transition:border-color .15s}
+    input:focus{outline:none;border-color:#EE0000}
+    .optional{color:#555;font-size:11px;font-weight:400;margin-left:6px}
+    button{background:#EE0000;color:#fff;border:none;border-radius:7px;padding:13px 24px;
+           font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-top:4px;transition:background .15s}
+    button:hover{background:#cc0000}
+    button:disabled{background:#555;cursor:not-allowed}
+    .hint{font-size:12px;color:#555;margin-top:20px;text-align:center;line-height:1.7}
+    .hint a{color:#EE0000;text-decoration:none}
+    .hint a:hover{text-decoration:underline}
+    .error{color:#ff6b6b;font-size:13px;margin-bottom:14px;padding:10px;background:#2a1515;
+           border-radius:6px;border-left:3px solid #EE0000;display:none}
+    .divider{border:none;border-top:1px solid #2a2a2a;margin:24px 0}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">errex</div>
+    <div class="tagline">Error explainer &amp; security scanner</div>
+
+    <div class="error" id="err"></div>
+
+    <div class="field">
+      <label>Anthropic API Key</label>
+      <input type="password" id="api-key" placeholder="sk-ant-api03-..." autocomplete="off" />
+    </div>
+
+    <hr class="divider">
+
+    <div class="field">
+      <label>errex Pro License Key <span class="optional">(optional)</span></label>
+      <input type="text" id="license-key" placeholder="ERREX-PRO-XXXXXX-XXXXXXXX" autocomplete="off" />
+    </div>
+
+    <button id="btn" onclick="setup()">Get Started &rarr;</button>
+
+    <div class="hint">
+      Get a free Anthropic API key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a><br>
+      Get errex Pro at <a href="https://errex.roguehometech.com/pro" target="_blank">errex.roguehometech.com/pro</a>
+    </div>
+  </div>
+  <script>
+    document.getElementById('api-key').focus();
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') setup(); });
+
+    async function setup() {
+      const apiKey = document.getElementById('api-key').value.trim();
+      const licKey = document.getElementById('license-key').value.trim();
+      const errEl  = document.getElementById('err');
+      const btn    = document.getElementById('btn');
+
+      errEl.style.display = 'none';
+      if (!apiKey) { show('Please enter your Anthropic API key.'); return; }
+      if (!apiKey.startsWith('sk-')) { show('That doesn\\'t look like an Anthropic API key (should start with sk-).'); return; }
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const r = await fetch('/api/setup', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({api_key: apiKey, license_key: licKey})
+        });
+        const d = await r.json();
+        if (d.ok) { window.location.href = '/'; }
+        else { show(d.error || 'Setup failed — please try again.'); btn.disabled=false; btn.textContent='Get Started →'; }
+      } catch(e) { show('Could not connect. Is errex running?'); btn.disabled=false; btn.textContent='Get Started →'; }
+    }
+
+    function show(msg) {
+      const el = document.getElementById('err');
+      el.textContent = msg; el.style.display = 'block';
+    }
+  </script>
+</body>
+</html>'''
+
+
+def _load_config() -> dict:
+    try:
+        return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_config(data: dict) -> None:
+    _CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _needs_setup() -> bool:
+    """Return True if no API key is configured anywhere."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return False
+    return not bool(_load_config().get("anthropic_api_key"))
+
+
+def _load_api_key_from_config() -> None:
+    """Load saved API key from config into env if not already set."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        key = _load_config().get("anthropic_api_key", "")
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
+
 
 # ─── HTML ─────────────────────────────────────────────────────────────────────
 
@@ -33,23 +155,44 @@ HTML = r"""<!DOCTYPE html>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>errex</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=Red+Hat+Text:wght@400;500&display=swap" rel="stylesheet">
+  <script>
+    (function(){var t=localStorage.getItem('errex-theme')||'dark';document.documentElement.setAttribute('data-theme',t);
+                var sz=localStorage.getItem('errex-textsize')||'normal';document.documentElement.setAttribute('data-textsize',sz);})();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0f1117; --panel: #1a1d27; --border: #2d3748;
-      --text: #e2e8f0; --muted: #64748b; --accent: #7dd3fc;
-      --green: #86efac; --red: #f87171; --r: 8px;
+      --bg: #ffffff; --panel: #f5f5f5; --border: #d0d0d0;
+      --text: #151515; --muted: #6a6e73; --accent: #EE0000;
+      --green: #3d9970; --red: #EE0000; --r: 8px;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    [data-theme="dark"] {
+      --bg: #151515; --panel: #1f1f1f; --border: #3a3a3a;
+      --text: #e2e8f0; --muted: #8a8d90; --accent: #EE0000;
+      --green: #86efac; --red: #f87171;
+    }
+    body { font-family: "Red Hat Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
            background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+
+    /* ── Large text accessibility mode — scales the whole UI up ── */
+    [data-textsize="large"] { font-size: 1.25em; }
+    [data-textsize="large"] #out, [data-textsize="large"] #err { line-height: 1.6; }
 
     /* ── Two-column layout ── */
     .app { display: grid; grid-template-columns: 3fr 2fr; grid-template-rows: auto 1fr;
            height: 100vh; }
     .hdr { grid-column: 1/-1; padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border);
            display: flex; align-items: center; gap: 0.75rem; }
-    .hdr h1 { font-size: 1.15rem; font-weight: 700; color: var(--accent); }
+    .hdr h1 { font-size: 1.15rem; font-weight: 700; color: var(--accent); font-family: "Red Hat Display", sans-serif; }
+    #theme-toggle { margin-left: 0.5rem; background: none; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer; padding: 0.3rem 0.6rem; font-size: 0.82rem; transition: border-color 0.15s; }
+    #theme-toggle:hover { border-color: var(--accent); color: var(--accent); }
+    #textsize-toggle { margin-left: 0.25rem; background: none; border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer; padding: 0.3rem 0.6rem; font-size: 0.82rem; transition: border-color 0.15s; }
+    #textsize-toggle:hover { border-color: var(--accent); color: var(--accent); }
     .hdr .sub { color: var(--muted); font-size: 0.82rem; }
     .main { padding: 1.1rem; overflow-y: auto; border-right: 1px solid var(--border);
             display: flex; flex-direction: column; gap: 0.75rem; }
@@ -75,7 +218,7 @@ HTML = r"""<!DOCTYPE html>
       background: var(--panel); border: none; color: var(--muted); padding: 0.38rem 0.75rem;
       font-size: 0.8rem; cursor: pointer; transition: background 0.15s, color 0.15s;
     }
-    .tabs button.on { background: var(--accent); color: #0f1117; font-weight: 600; }
+    .tabs button.on { background: var(--accent); color: #fff; font-weight: 600; }
     .chk { display: flex; align-items: center; gap: 0.3rem; cursor: pointer;
            font-size: 0.8rem; color: var(--muted); user-select: none; }
     .chk input { accent-color: var(--accent); }
@@ -172,6 +315,29 @@ HTML = r"""<!DOCTYPE html>
     .stat-total { font-size:2.2rem; font-weight:700; color:var(--accent); margin-bottom:1rem; }
     .stat-total span { font-size:0.9rem; font-weight:400; color:var(--muted); margin-left:0.3rem; }
     .stat-section { font-size:0.72rem; font-weight:600; color:var(--muted); letter-spacing:.06em;
+
+    /* ── Scan tab ── */
+    .finding-card { background:var(--panel); border:1px solid var(--border); border-radius:6px;
+                    padding:0.65rem 0.75rem; margin-bottom:0.5rem; }
+    .finding-hdr { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.3rem; flex-wrap:wrap; }
+    .sev-badge { font-size:0.65rem; font-weight:700; padding:0.12rem 0.38rem; border-radius:3px; color:#fff; flex-shrink:0; }
+    .finding-ttl { font-size:0.84rem; font-weight:600; flex:1; min-width:0; }
+    .finding-det { font-size:0.76rem; color:var(--muted); white-space:pre-wrap; word-break:break-word; }
+    .finding-cmd { font-size:0.73rem; background:#0c0e14; border:1px solid var(--border); border-radius:4px;
+                   padding:0.28rem 0.5rem; margin-top:0.3rem; overflow-x:auto; }
+    .finding-cmd code { color:#7dd3fc; }
+    .finding-expl { font-size:0.78rem; color:#a0aec0; margin-top:0.35rem; white-space:pre-wrap; line-height:1.5; }
+    .fix-btn { font-size:0.73rem; padding:0.12rem 0.45rem; background:var(--accent); color:#fff;
+               border:none; border-radius:3px; cursor:pointer; flex-shrink:0; }
+    .fix-btn:hover { opacity:0.82; }
+    .batch-fix-btn { font-size:0.78rem; padding:0.28rem 0.65rem; background:#2d3748; color:var(--text);
+                     border:1px solid var(--border); border-radius:4px; cursor:pointer; margin-right:0.4rem; }
+    .batch-fix-btn:hover { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .scan-ctrl { margin-bottom:0.5rem; display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; }
+    .scan-ctrl button { font-size:0.8rem; padding:0.28rem 0.65rem; background:var(--accent); color:#fff;
+                        border:none; border-radius:4px; cursor:pointer; }
+    .scan-ctrl button:hover { opacity:0.82; }
+    .scan-status { font-size:0.76rem; color:var(--muted); margin-top:0.35rem; }
                     text-transform:uppercase; margin:1.1rem 0 0.5rem; }
     .bar-row { display:flex; align-items:center; gap:0.5rem; margin-bottom:0.35rem; }
     .bar-label { font-size:0.78rem; color:#cbd5e1; width:130px; flex-shrink:0;
@@ -214,7 +380,10 @@ HTML = r"""<!DOCTYPE html>
   <header class="hdr">
     <h1>errex</h1>
     <span class="sub">paste any error · get a plain-English explanation</span>
+    <span id="license-badge"></span>
     <a href="/privacy" target="_blank" style="margin-left:auto;font-size:0.72rem;color:var(--muted);text-decoration:none;border:1px solid var(--border);border-radius:5px;padding:0.18rem 0.5rem;" title="Privacy policy — what errex sees and stores">🔒 Privacy</a>
+    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">🌙</button>
+    <button id="textsize-toggle" onclick="toggleTextSize()" title="Toggle large text">A+</button>
   </header>
 
   <main class="main">
@@ -248,11 +417,21 @@ HTML = r"""<!DOCTYPE html>
     <div class="sbar-tabs">
       <button class="sbar-tab active" onclick="switchTab('history')">History</button>
       <button class="sbar-tab" onclick="switchTab('stats')">Stats</button>
+      <button class="sbar-tab" onclick="switchTab('scan')">Scan</button>
     </div>
     <div id="history-content">
       <div id="hist"><p class="he-empty">Loading…</p></div>
     </div>
     <div id="stats-content" style="display:none"></div>
+    <div id="scan-content" style="display:none">
+      <div class="scan-ctrl">
+        <button onclick="runScan(false)">Run Scan</button>
+        <button onclick="runScan(true)">+ Network</button>
+      </div>
+      <div id="scan-status" class="scan-status"></div>
+      <div id="scan-findings" style="margin-top:0.5rem"></div>
+      <div id="scan-fix-bar" style="display:none; margin-top:0.6rem; padding-top:0.5rem; border-top:1px solid var(--border)"></div>
+    </div>
   </aside>
 </div>
 
@@ -434,17 +613,149 @@ HTML = r"""<!DOCTYPE html>
   function switchTab(name) {
     document.getElementById('history-content').style.display = name === 'history' ? '' : 'none';
     document.getElementById('stats-content').style.display = name === 'stats' ? '' : 'none';
+    document.getElementById('scan-content').style.display = name === 'scan' ? '' : 'none';
     document.querySelectorAll('.sbar-tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === name));
     if (name === 'stats') loadStats();
   }
 
+  // ── Scan tab ──────────────────────────────────────────────────────────────
+  let _sf = {}, _sfixable = {};
+
+  function runScan(net) {
+    document.getElementById('scan-findings').innerHTML = '';
+    const bar = document.getElementById('scan-fix-bar');
+    bar.style.display = 'none'; bar.innerHTML = '';
+    _sf = {}; _sfixable = {};
+    const status = document.getElementById('scan-status');
+    status.textContent = 'Starting scan…';
+    fetch('/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({network: net})
+    }).then(r => {
+      const reader = r.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      function pump() {
+        reader.read().then(({done, value}) => {
+          if (done) { _updateFixBar(); return; }
+          buf += dec.decode(value, {stream: true});
+          const parts = buf.split('\n\n'); buf = parts.pop();
+          parts.forEach(p => { if (p.startsWith('data: ')) { try { _handleScanEvt(JSON.parse(p.slice(6))); } catch(e){} } });
+          pump();
+        }).catch(() => { status.textContent = 'Scan error.'; });
+      }
+      pump();
+    }).catch(() => { status.textContent = 'Could not connect.'; });
+  }
+
+  function _handleScanEvt(e) {
+    const st = document.getElementById('scan-status');
+    if (e.type === 'start') { st.textContent = `Scanning ${e.platform}… (${e.total} checks)`; }
+    else if (e.type === 'check') { st.textContent = `Checking ${e.name}… (${e.done+1}/${e.total})`; }
+    else if (e.type === 'finding') {
+      _sf[e.id] = e;
+      if (e.web_fixable) _sfixable[e.id] = true;
+      document.getElementById('scan-findings').insertAdjacentHTML('beforeend', _buildCard(e));
+    } else if (e.type === 'explain_token') {
+      const el = document.getElementById('expl-' + e.id);
+      if (el) el.textContent += e.token;
+    } else if (e.type === 'done') {
+      st.textContent = `Done — ${e.total_findings} finding(s), ${e.fixable} fixable`;
+      _updateFixBar();
+    }
+  }
+
+  function _buildCard(f) {
+    const C = {critical:'#ef4444',high:'#f97316',medium:'#eab308',low:'#3b82f6',info:'#6b7280'};
+    const fixBtn = f.web_fixable ? `<button class="fix-btn" onclick="applyFix('${esc(f.id)}')">Fix</button>` : '';
+    const cmd = (f.fix_cmd && !f.web_fixable) ? `<div class="finding-cmd"><code>${esc(f.fix_cmd)}</code></div>` : '';
+    const expl = (f.severity !== 'info') ? `<div id="expl-${esc(f.id)}" class="finding-expl"></div>` : '';
+    return `<div class="finding-card" id="card-${esc(f.id)}">
+      <div class="finding-hdr">
+        <span class="sev-badge" style="background:${C[f.severity]||'#6b7280'}">${f.severity.toUpperCase()}</span>
+        <span class="finding-ttl">${esc(f.title)}</span>${fixBtn}
+      </div>
+      <div class="finding-det">${esc(f.detail)}</div>${cmd}${expl}
+    </div>`;
+  }
+
+  function _updateFixBar() {
+    const bar = document.getElementById('scan-fix-bar');
+    const btns = ['critical','high','medium','low'].map(sev => {
+      const ids = Object.keys(_sf).filter(id => _sf[id].severity === sev && _sf[id].fixable);
+      return ids.length ? `<button class="batch-fix-btn" data-sev="${sev}" onclick="applyBatch('${sev}')">Fix all ${sev.toUpperCase()} (${ids.length})</button>` : '';
+    }).filter(Boolean);
+    if (btns.length) { bar.innerHTML = btns.join(''); bar.style.display = 'block'; }
+  }
+
+  function applyFix(id) {
+    _doFix([id], results => {
+      results.forEach(r => {
+        const btn = document.querySelector(`#card-${r.finding_id} .fix-btn`);
+        if (btn) btn.textContent = r.success ? '✔ Fixed' : '✘ Failed';
+      });
+    });
+  }
+
+  function applyBatch(sev) {
+    const ids = Object.keys(_sf).filter(id => _sf[id].severity === sev && _sf[id].fixable);
+    _doFix(ids, results => {
+      results.forEach(r => {
+        const btn = document.querySelector(`#card-${r.finding_id} .fix-btn`);
+        if (btn) btn.textContent = r.success ? '✔ Fixed' : '✘ Failed';
+      });
+      const btn = document.querySelector(`.batch-fix-btn[data-sev="${sev}"]`);
+      if (btn) btn.textContent = `✔ Applied ${results.length} fix(es)`;
+    });
+  }
+
+  function _doFix(ids, cb) {
+    fetch('/scan/fix', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({finding_ids: ids})
+    }).then(r => r.json()).then(d => cb(d.results || [])).catch(() => {});
+  }
+
   loadHist();
+
+  fetch('/api/license').then(r=>r.json()).then(d=>{
+    const b = document.getElementById('license-badge');
+    if(d.pro) b.innerHTML='<span style="background:#3d9970;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;margin-right:8px">PRO</span>';
+    else b.innerHTML='<a href="https://errex.roguehometech.com/pro" target="_blank" style="color:#EE0000;font-size:11px;margin-right:8px">Upgrade to Pro</a>';
+  }).catch(()=>{});
+
+  function toggleTheme() {
+    var current = document.documentElement.getAttribute('data-theme') || 'dark';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('errex-theme', next);
+    document.getElementById('theme-toggle').textContent = next === 'dark' ? '🌙' : '☀️';
+  }
+  // Set initial icon
+  (function(){ var t=document.documentElement.getAttribute('data-theme')||'dark';
+    var btn=document.getElementById('theme-toggle'); if(btn) btn.textContent=t==='dark'?'🌙':'☀️'; })();
+
+  function toggleTextSize() {
+    var current = document.documentElement.getAttribute('data-textsize') || 'normal';
+    var next = current === 'large' ? 'normal' : 'large';
+    document.documentElement.setAttribute('data-textsize', next);
+    localStorage.setItem('errex-textsize', next);
+    document.getElementById('textsize-toggle').setAttribute('aria-pressed', next === 'large');
+  }
+  // Reflect initial state for screen readers
+  (function(){ var s=document.documentElement.getAttribute('data-textsize')||'normal';
+    var btn=document.getElementById('textsize-toggle'); if(btn) btn.setAttribute('aria-pressed', s === 'large'); })();
 </script>
 </body>
 </html>"""
 
 
 # ─── HTTP Handler ─────────────────────────────────────────────────────────────
+
+
+# Findings from the most recent /scan call — used by /scan/fix
+_current_scan_findings: dict = {}
 
 
 def _compute_stats() -> dict:
@@ -503,6 +814,23 @@ class Handler(BaseHTTPRequestHandler):
 
         path = urlparse(self.path).path
 
+        # First-run setup redirect
+        if _needs_setup() and path not in ("/setup", "/api/setup"):
+            self.send_response(302)
+            self.send_header("Location", "/setup")
+            self.end_headers()
+            return
+
+        if path == "/setup":
+            self._html(_SETUP_HTML)
+            return
+
+        if path == "/api/license":
+            from .license import get_license, is_pro
+            info = get_license()
+            self._json({"pro": is_pro(), "info": info})
+            return
+
         if path == "/stats":
             self._json(_compute_stats())
             return
@@ -557,7 +885,37 @@ class Handler(BaseHTTPRequestHandler):
         if not self._check_auth():
             return
 
-        if urlparse(self.path).path != "/explain":
+        path = urlparse(self.path).path
+
+        if path == "/api/setup":
+            length = min(int(self.headers.get("Content-Length", 0)), 4096)
+            body = json.loads(self.rfile.read(length))
+            api_key = body.get("api_key", "").strip()
+            license_key = body.get("license_key", "").strip()
+            if not api_key or not api_key.startswith("sk-"):
+                self._json({"ok": False, "error": "Invalid API key format."})
+                return
+            config = _load_config()
+            config["anthropic_api_key"] = api_key
+            if license_key:
+                from .license import activate
+                result = activate(license_key)
+                if result["success"]:
+                    config["license_key"] = license_key.upper()
+            _save_config(config)
+            os.environ["ANTHROPIC_API_KEY"] = api_key
+            self._json({"ok": True})
+            return
+
+        if path == "/scan":
+            self._handle_scan()
+            return
+
+        if path == "/scan/fix":
+            self._handle_scan_fix()
+            return
+
+        if path != "/explain":
             self.send_response(404)
             self.end_headers()
             return
@@ -635,6 +993,105 @@ class Handler(BaseHTTPRequestHandler):
                 self._sse({"error": str(e)})
             except Exception:
                 pass
+
+    def _handle_scan(self) -> None:
+        """POST /scan — run security scan and stream findings + Claude explanations via SSE."""
+        global _current_scan_findings
+
+        _MAX = 4096
+        length = min(int(self.headers.get("Content-Length", 0)), _MAX)
+        body = json.loads(self.rfile.read(length)) if length else {}
+        include_network = bool(body.get("network", False))
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+
+        from .scan import detect_platform, SCAN_EXPLAIN_PROMPT
+        from .scanners import cve as _cve, diagnostics as _diag
+
+        plat = detect_platform()
+        checks = []
+        if plat == "macos":
+            from .scanners import macos as _pl
+            checks.extend(_pl.get_checks())
+        elif plat == "windows":
+            from .scanners import windows as _pl  # type: ignore[no-redef]
+            checks.extend(_pl.get_checks())
+        checks.append(("Python Package CVEs", _cve.check_python_packages))
+        checks.extend(_diag.get_checks())
+        total = len(checks) + (1 if include_network else 0)
+
+        self._sse({"type": "start", "platform": plat, "total": total})
+
+        findings = []
+        for i, (name, fn) in enumerate(checks):
+            self._sse({"type": "check", "name": name, "done": i, "total": total})
+            try:
+                result = fn()
+                if result is not None:
+                    findings.append(result)
+                    self._sse({"type": "finding", **result.to_dict()})
+            except Exception:
+                pass
+
+        if include_network:
+            self._sse({"type": "check", "name": "Network devices", "done": len(checks), "total": total})
+            try:
+                from .scanners import network as _net
+                net_findings = _net.get_findings()
+                findings.extend(net_findings)
+                for f in net_findings:
+                    self._sse({"type": "finding", **f.to_dict()})
+            except Exception:
+                pass
+
+        _current_scan_findings = {f.id: f for f in findings}
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            for finding in findings:
+                if finding.severity == "info":
+                    continue
+                self._sse({"type": "explain_start", "id": finding.id})
+                try:
+                    client = anthropic.Anthropic(api_key=api_key, timeout=_constants.API_TIMEOUT)
+                    prompt = SCAN_EXPLAIN_PROMPT.format(
+                        severity=finding.severity.upper(),
+                        title=finding.title,
+                        detail=finding.detail[:500],
+                    )
+                    with client.messages.stream(
+                        model="claude-sonnet-4-6",
+                        max_tokens=300,
+                        messages=[{"role": "user", "content": prompt}],
+                    ) as stream:
+                        for token in stream.text_stream:
+                            self._sse({"type": "explain_token", "id": finding.id, "token": token})
+                except Exception as exc:
+                    self._sse({"type": "explain_token", "id": finding.id, "token": f"[{exc}]"})
+                self._sse({"type": "explain_done", "id": finding.id})
+
+        fixable = sum(1 for f in findings if f.is_fixable())
+        self._sse({"type": "done", "total_findings": len(findings), "fixable": fixable})
+
+    def _handle_scan_fix(self) -> None:
+        """POST /scan/fix — apply fixes for the given finding IDs."""
+        _MAX = 4096
+        length = min(int(self.headers.get("Content-Length", 0)), _MAX)
+        body = json.loads(self.rfile.read(length)) if length else {}
+        ids = body.get("finding_ids", [])
+
+        from .scan import auto_fix
+        findings_to_fix = [
+            _current_scan_findings[fid]
+            for fid in ids
+            if fid in _current_scan_findings
+        ]
+        results = auto_fix(findings_to_fix)
+        self._json({"results": [r.to_dict() for r in results]})
 
     def _sse(self, data: dict) -> None:
         line = f"data: {json.dumps(data)}\n\n".encode()
@@ -740,6 +1197,7 @@ def serve(host: str = "127.0.0.1", port: int = 7337, auth: str | None = None,
     tls=True     — wrap in HTTPS using an auto-generated self-signed cert
     cert/key     — paths to an existing cert/key (implies tls=True)
     """
+    _load_api_key_from_config()
     import ssl as _ssl
     token = base64.b64encode(auth.encode()).decode() if auth else None
     if tunnel and not auth:

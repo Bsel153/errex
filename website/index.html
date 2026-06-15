@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>errex — Error explainer &amp; security scanner</title>
+  <meta name="description" content="Paste or pipe any error and get a plain-English explanation. Plus a built-in security scanner, malware detection, and ticket system. Powered by Claude.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700;800&family=Red+Hat+Text:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"Red Hat Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         background:#151515;color:#e0e0e0;line-height:1.6}
+    h1,h2,h3{font-family:"Red Hat Display",sans-serif}
+    a{color:#EE0000;text-decoration:none}
+    a:hover{text-decoration:underline}
+    .wrap{max-width:980px;margin:0 auto;padding:0 24px}
+
+    /* Nav */
+    nav{border-bottom:1px solid #2a2a2a;padding:18px 0}
+    nav .wrap{display:flex;align-items:center;justify-content:space-between}
+    .logo{font-size:1.5rem;font-weight:800;color:#EE0000;letter-spacing:-1px}
+    nav a.cta{background:#EE0000;color:#fff;padding:9px 20px;border-radius:7px;font-weight:600;font-size:14px}
+    nav a.cta:hover{background:#cc0000;text-decoration:none}
+
+    /* Hero */
+    .hero{padding:90px 0 70px;text-align:center}
+    .hero h1{font-size:3rem;font-weight:800;letter-spacing:-1.5px;margin-bottom:18px}
+    .hero h1 span{color:#EE0000}
+    .hero p{font-size:1.2rem;color:#8a8d90;max-width:620px;margin:0 auto 36px}
+    .btnrow{display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
+    .btn{display:inline-block;padding:14px 30px;border-radius:8px;font-weight:600;font-size:15px}
+    .btn-primary{background:#EE0000;color:#fff}
+    .btn-primary:hover{background:#cc0000;text-decoration:none}
+    .btn-secondary{background:#1f1f1f;color:#e0e0e0;border:1px solid #3a3a3a}
+    .btn-secondary:hover{background:#272727;text-decoration:none}
+
+    /* Terminal mockup */
+    .mock{background:#0d0d0d;border:1px solid #2a2a2a;border-radius:12px;max-width:720px;
+          margin:50px auto 0;overflow:hidden;text-align:left;box-shadow:0 30px 80px rgba(0,0,0,.5)}
+    .mock-bar{background:#1a1a1a;padding:11px 16px;display:flex;gap:7px;border-bottom:1px solid #2a2a2a}
+    .mock-bar span{width:11px;height:11px;border-radius:50%;display:inline-block}
+    .mock pre{padding:22px;font-family:ui-monospace,Menlo,monospace;font-size:13.5px;color:#86efac;
+              white-space:pre-wrap;line-height:1.7}
+    .mock pre .err{color:#f87171}
+    .mock pre .muted{color:#666}
+
+    /* Features */
+    .features{padding:80px 0}
+    .features h2{text-align:center;font-size:2.1rem;margin-bottom:50px;letter-spacing:-1px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+    .card{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:12px;padding:28px}
+    .card .icon{font-size:1.8rem;margin-bottom:14px}
+    .card h3{font-size:1.15rem;margin-bottom:10px}
+    .card p{color:#8a8d90;font-size:14.5px}
+
+    /* Pricing */
+    .pricing{padding:80px 0;background:#1a1a1a;border-top:1px solid #2a2a2a;border-bottom:1px solid #2a2a2a}
+    .pricing h2{text-align:center;font-size:2.1rem;margin-bottom:14px;letter-spacing:-1px}
+    .pricing > .wrap > p{text-align:center;color:#8a8d90;margin-bottom:50px}
+    .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:24px;max-width:1080px;margin:0 auto}
+    .plan{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:14px;padding:34px}
+    .plan.pro{border-color:#EE0000;position:relative}
+    .plan.pro::before{content:"MOST POPULAR";position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+                      background:#EE0000;color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;
+                      padding:4px 14px;border-radius:20px}
+    .plan.priority{border-color:#3d9970;position:relative}
+    .plan.priority::before{content:"WHITE GLOVE";position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+                      background:#3d9970;color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;
+                      padding:4px 14px;border-radius:20px}
+    .plan h3{font-size:1.3rem;margin-bottom:6px}
+    .plan .price{font-size:2.4rem;font-weight:800;font-family:"Red Hat Display",sans-serif;margin:14px 0 4px}
+    .plan .price span{font-size:1rem;font-weight:400;color:#8a8d90}
+    .plan ul{list-style:none;margin:24px 0;color:#ccc;font-size:14.5px}
+    .plan li{padding:7px 0;display:flex;gap:10px}
+    .plan li::before{content:"✓";color:#3d9970;font-weight:700}
+    .plan .btn{display:block;text-align:center;width:100%}
+
+    /* Download */
+    .download{padding:80px 0;text-align:center}
+    .download h2{font-size:2.1rem;margin-bottom:16px;letter-spacing:-1px}
+    .download p{color:#8a8d90;margin-bottom:36px}
+    .platforms{display:flex;gap:18px;justify-content:center;flex-wrap:wrap}
+    .plat{background:#1f1f1f;border:1px solid #2a2a2a;border-radius:12px;padding:26px 40px;min-width:180px}
+    .plat .icon{font-size:2rem;margin-bottom:10px}
+    .plat h4{margin-bottom:6px}
+    .plat p{color:#8a8d90;font-size:13px;margin-bottom:14px}
+
+    footer{padding:40px 0;text-align:center;color:#666;font-size:13px;border-top:1px solid #2a2a2a}
+    footer a{color:#8a8d90}
+
+    @media (max-width:640px){ .hero h1{font-size:2.1rem} .hero p{font-size:1.05rem} }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="wrap">
+      <div class="logo">errex</div>
+      <a href="#pricing" class="cta">Get errex Pro</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="wrap">
+      <h1>Stop Googling your <span>errors</span>.</h1>
+      <p>Paste or pipe any error message and get a plain-English explanation in seconds —
+         plus a built-in security scanner, malware detection, and ticket system. Powered by Claude.</p>
+      <div class="btnrow">
+        <a href="#download" class="btn btn-primary">Download for Mac</a>
+        <a href="#pricing" class="btn btn-secondary">See pricing</a>
+      </div>
+
+      <div class="mock">
+        <div class="mock-bar"><span style="background:#ff5f56"></span><span style="background:#ffbd2e"></span><span style="background:#27c93f"></span></div>
+        <pre><span class="muted">$</span> errex --explain <span class="err">"TypeError: 'NoneType' object is not subscriptable"</span>
+
+<span class="muted">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span>
+You tried to index or slice something that is <span class="err">None</span> — usually because
+a function returned nothing (no explicit <span class="muted">return</span>) where you expected a
+list, dict, or string.
+
+<span class="muted">Fix:</span> check the value isn't None before subscripting it, or trace
+back to where it should have been assigned.
+<span class="muted">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span></pre>
+      </div>
+    </div>
+  </header>
+
+  <section class="features">
+    <div class="wrap">
+      <h2>Everything you need, in one tool</h2>
+      <div class="grid">
+        <div class="card"><div class="icon">💬</div><h3>Plain-English explanations</h3><p>Paste any error — stack trace, exit code, HTTP status, cron expression — and get a clear explanation plus a fix.</p></div>
+        <div class="card"><div class="icon">🖥️</div><h3>Beautiful dashboard</h3><p>A local web UI with dark mode, history, stats, and one-click rescans — opens as its own native app, no browser needed.</p></div>
+        <div class="card"><div class="icon">🛡️</div><h3>Security scanner</h3><p>Finds CVEs, misconfigurations, exposed secrets, and weak permissions across macOS, Linux, and Windows.</p></div>
+        <div class="card"><div class="icon">🦠</div><h3>Malware detection</h3><p>Layered scanning — heuristics, ClamAV integration, and VirusTotal hash lookups — to catch what shouldn't be there.</p></div>
+        <div class="card"><div class="icon">📈</div><h3>Smart-home diagnostics</h3><p>Predictive disk-failure alerts, memory &amp; network health, duplicate-file and browser-cache cleanup, and offline/unauthorized device detection on your home network.</p></div>
+        <div class="card"><div class="icon">🎫</div><h3>Ticket system</h3><p>Findings become trackable tickets with tech notes, synced to GitHub Issues and posted to Discord automatically.</p></div>
+        <div class="card"><div class="icon">⚡</div><h3>Built for the terminal</h3><p>Pipe errors directly from your shell, watch log files live, or generate tests from a stack trace.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="pricing" id="pricing">
+    <div class="wrap">
+      <h2>Simple pricing</h2>
+      <p>Start free. Upgrade when you need the power tools — or the white-glove treatment.</p>
+      <div class="plans">
+        <div class="plan">
+          <h3>Basic errex</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">For every RHT customer</p>
+          <div class="price">$0</div>
+          <ul>
+            <li>Unlimited error explanations</li>
+            <li>Exit code / HTTP / cron lookups</li>
+            <li>History &amp; usage stats</li>
+            <li>Web dashboard</li>
+          </ul>
+          <a href="#download" class="btn btn-secondary">Download free</a>
+        </div>
+        <div class="plan pro">
+          <h3>errex Pro</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">Advanced diagnostics &amp; security</p>
+          <div class="price">$7<span>/month</span></div>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-6px">or $59/year — save 30%</p>
+          <ul>
+            <li>Everything in Basic</li>
+            <li>Security, malware &amp; vulnerability scanning</li>
+            <li>Predictive failure alerts (disk, memory, network)</li>
+            <li>Duplicate-file &amp; browser-cache cleanup</li>
+            <li>Offline &amp; unauthorized device alerts</li>
+            <li>Ticket system + tech notes, GitHub &amp; Discord sync</li>
+            <li>Email reports, scan scheduling, file watching, code tools</li>
+          </ul>
+          <a href="https://gumroad.com/" class="btn btn-primary">Get errex Pro</a>
+        </div>
+        <div class="plan priority">
+          <h3>Pro + RHT Priority</h3>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-2px">Everything, plus a human in your corner</p>
+          <div class="price">$17<span>/month</span></div>
+          <p style="color:#8a8d90;font-size:13px;margin-top:-6px">or $149/year — save 27%</p>
+          <ul>
+            <li>Everything in Pro</li>
+            <li>Priority escalation — jump the queue for human support</li>
+            <li>Monthly proactive report check-ins from RHT</li>
+            <li>A dedicated RHT technician for your account</li>
+          </ul>
+          <a href="https://gumroad.com/" class="btn btn-primary">Get Priority</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="download" id="download">
+    <div class="wrap">
+      <h2>Download errex</h2>
+      <p>Free to download. No account required to get started.</p>
+      <div class="platforms">
+        <div class="plat">
+          <div class="icon">🍎</div>
+          <h4>macOS</h4>
+          <p>Apple Silicon &amp; Intel</p>
+          <a href="#" class="btn btn-primary">Download .dmg</a>
+        </div>
+        <div class="plat">
+          <div class="icon">🪟</div>
+          <h4>Windows</h4>
+          <p>Windows 10 &amp; 11</p>
+          <a href="#" class="btn btn-secondary">Download .exe</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <p>errex — built by Rogue Home Tech · <a href="mailto:support@roguehometech.com">support@roguehometech.com</a></p>
+    </div>
+  </footer>
+
+</body>
+</html>

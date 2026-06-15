@@ -1,0 +1,49 @@
+name: Publish VS Code Extension
+
+"on":
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Package only, skip publish"
+        type: boolean
+        default: true
+
+jobs:
+  package:
+    name: Package extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        working-directory: extensions/vscode
+        run: npm install
+      - name: Compile TypeScript
+        working-directory: extensions/vscode
+        run: npm run compile
+      - name: Package
+        working-directory: extensions/vscode
+        run: npx vsce package --no-dependencies
+      - name: Upload .vsix
+        uses: actions/upload-artifact@v4
+        with:
+          name: errex-vsix
+          path: extensions/vscode/*.vsix
+
+  publish:
+    name: Publish to VS Code Marketplace
+    needs: package
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: errex-vsix
+      - name: Publish
+        run: npx vsce publish --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

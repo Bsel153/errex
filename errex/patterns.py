@@ -103,7 +103,7 @@ PATTERNS: list[Pattern] = [
             "**Fix**: Convert explicitly:\n"
             "```python\nstr(value) + other_string\n# or\nint(string) + number\n```\n\n"
             "**Gotcha**: `+` on strings is concatenation. "
-            "Use f-strings for mixed formatting: `f\"{num} items\"`."
+            "Use f-strings for mixed formatting: `f\"{{num}} items\"`."
         ),
     ),
     Pattern(
@@ -308,6 +308,17 @@ PATTERNS: list[Pattern] = [
         ),
     ),
     Pattern(
+        title="npm — no package.json",
+        regex=re.compile(r"npm (?:ERR! )?ENOENT: no such file or directory, open '.*package\.json'", re.IGNORECASE),
+        explanation=(
+            "**No `package.json` found in the current directory.**\n\n"
+            "**Fix**:\n"
+            "```bash\ncd /path/to/your/project   # navigate to your project root\nnpm init                   # create a new package.json interactively\nnpm init -y                # or accept all defaults\n```\n\n"
+            "**Gotcha**: Make sure you're in the project root, not a subdirectory — "
+            "`package.json` must be at the root where you run `npm install`."
+        ),
+    ),
+    Pattern(
         title="Node.js — ENOENT (file not found)",
         regex=re.compile(r"ENOENT: no such file or directory", re.IGNORECASE),
         explanation=(
@@ -353,6 +364,19 @@ PATTERNS: list[Pattern] = [
             "brew install <tool>     # macOS\napt install <tool>     # Debian/Ubuntu\n```\n\n"
             "**Gotcha**: If you just installed something and it's not found, "
             "open a new terminal or run `source ~/.bashrc` / `source ~/.zshrc` to reload PATH."
+        ),
+    ),
+    Pattern(
+        title="SSH — public key authentication failed",
+        regex=re.compile(r"Permission denied \(publickey\)", re.IGNORECASE),
+        explanation=(
+            "**The SSH server rejected your public key.**\n\n"
+            "**Fix**:\n"
+            "```bash\nssh-add -l                     # check loaded keys\nssh-add ~/.ssh/id_ed25519      # add your key\n# Copy your public key to the server:\nssh-copy-id user@server        # easiest method\n```\n"
+            "On the server, fix permissions:\n"
+            "```bash\nchmod 700 ~/.ssh\nchmod 600 ~/.ssh/authorized_keys\n```\n\n"
+            "**Gotcha**: If the server's `sshd_config` has `PubkeyAuthentication no`, "
+            "key auth is disabled entirely — check with your admin."
         ),
     ),
     Pattern(
@@ -466,6 +490,54 @@ PATTERNS: list[Pattern] = [
         ),
     ),
     # ── Rust ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Rust — E0308: mismatched types",
+        regex=re.compile(r"error\[E0308\]: mismatched types.*?expected `([^`]+)`, found `([^`]+)`", re.DOTALL),
+        explanation=(
+            "**Type mismatch: expected `{0}`, got `{1}`.**\n\n"
+            "**Fix**: Check the return type, add `.into()` for a `From`/`Into` conversion, "
+            "or use an explicit cast:\n"
+            "```rust\nlet x: i64 = my_i32 as i64;     // explicit cast\nlet s: String = my_str.into();  // From/Into trait\n```\n\n"
+            "**Gotcha**: Rust **never** implicitly converts numeric types — "
+            "even `i32` to `i64` requires an explicit `as` cast or `.into()`."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0382: borrow of moved value",
+        regex=re.compile(r"error\[E0382\]: (?:borrow of|use of) moved value: `([^`]+)`"),
+        explanation=(
+            "**`{0}` was moved — you can't use it after ownership transfer.**\n\n"
+            "**Fix**: Clone before moving if you need to keep using the original:\n"
+            "```rust\nlet owned = {0}.clone();  // clone before move\nsome_fn({0});            // {0} is moved here\nprintln!(\"{{:?}}\", owned); // use the clone\n```\n"
+            "Or pass a reference (`&{0}`) instead of moving, or restructure the code.\n\n"
+            "**Gotcha**: This is Rust's ownership system — "
+            "understand the difference between a *move* and a *borrow* (`&T`)."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0502: mutable + immutable borrow conflict",
+        regex=re.compile(r"error\[E0502\]: cannot borrow `([^`]+)` as mutable because it is also borrowed as immutable"),
+        explanation=(
+            "**Can't have a mutable and immutable borrow of `{0}` at the same time.**\n\n"
+            "**Fix**: End the immutable borrow before mutating:\n"
+            "```rust\nlet r = &{0}[0];         // immutable borrow\nprintln!(\"{{:?}}\", r);   // last use of r — borrow ends here\n{0}.push(4);            // mutable borrow OK now\n```\n\n"
+            "**Gotcha**: The borrow checker tracks lexical scopes — "
+            "restructure code so immutable and mutable borrows don't overlap."
+        ),
+    ),
+    Pattern(
+        title="Rust — E0499: double mutable borrow",
+        regex=re.compile(r"error\[E0499\]: cannot borrow `([^`]+)` as mutable more than once at a time"),
+        explanation=(
+            "**Only one mutable borrow at a time is allowed for `{0}`.**\n\n"
+            "**Fix**: Drop the first mutable borrow before creating a second one. "
+            "If you need multiple mutable references at once, use `RefCell`:\n"
+            "```rust\nuse std::cell::RefCell;\nlet data = RefCell::new(vec![1, 2, 3]);\nlet mut a = data.borrow_mut();\n// Drop `a` before calling borrow_mut() again\n```\n"
+            "Or restructure logic to avoid needing two mutable borrows simultaneously.\n\n"
+            "**Gotcha**: Split borrows (`&mut slice[0..2]` and `&mut slice[2..]`) are allowed — "
+            "the compiler can see they don't overlap."
+        ),
+    ),
     Pattern(
         title="Rust — E0308 (mismatched types)",
         regex=re.compile(r"error\[E0308\]: mismatched types", re.IGNORECASE),
@@ -834,6 +906,360 @@ PATTERNS: list[Pattern] = [
             "```python\nimport requests\nfrom urllib3.util.retry import Retry\nfrom requests.adapters import HTTPAdapter\n\nsession = requests.Session()\nretry = Retry(total=3, backoff_factor=1)\nsession.mount('https://', HTTPAdapter(max_retries=retry))\nresponse = session.get(url, timeout=30)\n```\n\n"
             "**Gotcha**: The default timeout is `None` (wait forever) — "
             "always set an explicit timeout to prevent your program hanging indefinitely."
+        ),
+    ),
+    # ── Go (additional) ──────────────────────────────────────────────────────
+    Pattern(
+        title="Go — undefined symbol",
+        regex=re.compile(r"undefined: (\S+)"),
+        explanation=(
+            "**`{0}` is not declared in this scope.**\n\n"
+            "**Fix**: Common causes:\n"
+            "- Missing import: `import \"package/path\"`\n"
+            "- Typo in the name\n"
+            "- Unexported identifier (starts lowercase) accessed from another package\n"
+            "- Defined in a different build tag / OS-specific file\n\n"
+            "**Gotcha**: In Go, identifiers starting with a lowercase letter are unexported — "
+            "they're package-private and can't be used from outside the package."
+        ),
+    ),
+    Pattern(
+        title="Go — type mismatch",
+        regex=re.compile(r"cannot use (\S+) \((?:variable of type|type) ([^)]+)\) as (?:type )?(\S+)"),
+        explanation=(
+            "**`{0}` is type `{1}`, but `{2}` is needed.** Go has no implicit type conversion.\n\n"
+            "**Fix**: Use an explicit conversion:\n"
+            "```go\nconverted := {2}({0})  // explicit cast\n```\n"
+            "Or assign the correct type from the start.\n\n"
+            "**Gotcha**: Even `int` and `int64` require an explicit cast in Go — "
+            "`var x int64 = myInt` won't compile if `myInt` is `int`."
+        ),
+    ),
+    Pattern(
+        title="Go — unused import",
+        regex=re.compile(r'"([^"]+)" imported and not used'),
+        explanation=(
+            "**`{0}` is imported but not used.** Go won't compile with unused imports.\n\n"
+            "**Fix**: Remove the import, or use the blank identifier to suppress the error "
+            "(useful for side-effect-only imports):\n"
+            "```go\nimport _ \"{0}\"  // import for side effects only\n```\n\n"
+            "**Gotcha**: If you're iterating and temporarily commenting out code, "
+            "use `_ = pkgName` as a placeholder to keep the import valid while you work."
+        ),
+    ),
+    Pattern(
+        title="Go — all goroutines are asleep (deadlock)",
+        regex=re.compile(r"fatal error: all goroutines are asleep - deadlock!", re.IGNORECASE),
+        explanation=(
+            "**All goroutines are blocked — the program is deadlocked and will never make progress.**\n\n"
+            "Common causes:\n"
+            "- Sending to an unbuffered channel with no receiver\n"
+            "- Receiving from a channel that is never written to\n"
+            "- A `sync.Mutex` locked twice in the same goroutine\n\n"
+            "**Fix**: Add a `default` case or use buffered channels:\n"
+            "```go\nselect {{\ncase ch <- value:  // send if ready\ndefault:           // don't block\n}}\n```\n\n"
+            "**Gotcha**: Use `go tool trace` or `-race` flag to detect goroutine leaks and "
+            "data races: `go run -race main.go`."
+        ),
+    ),
+    # ── Docker (additional) ──────────────────────────────────────────────────
+    Pattern(
+        title="Docker — pull access denied",
+        regex=re.compile(r"pull access denied for (\S+)", re.IGNORECASE),
+        explanation=(
+            "**Can't pull `{0}`.** The image is private, doesn't exist, or you're not logged in.\n\n"
+            "**Fix**:\n"
+            "```bash\ndocker login                       # log in to Docker Hub\ndocker login registry.example.com  # or a private registry\n```\n"
+            "Then verify the image name and tag exist:\n"
+            "```bash\ndocker pull {0}\n```\n\n"
+            "**Gotcha**: Private images on Docker Hub require `docker login` even if they exist — "
+            "the error message is the same whether the image doesn't exist or you lack access."
+        ),
+    ),
+    Pattern(
+        title="Docker — container name conflict",
+        regex=re.compile(r'Error response from daemon: Conflict\. The container name "/?([^"]+)" is already in use'),
+        explanation=(
+            "**Container `{0}` already exists.**\n\n"
+            "**Fix**:\n"
+            "```bash\ndocker rm {0}          # remove the stopped container\ndocker start {0}       # or restart it if you want it running again\n```\n"
+            "Or use a different name with `--name other-name`.\n\n"
+            "**Gotcha**: `docker run` creates a new container every time — "
+            "use `docker start` to restart an existing stopped container."
+        ),
+    ),
+    Pattern(
+        title="Docker — container not found",
+        regex=re.compile(r"Error: No such container: (\S+)", re.IGNORECASE),
+        explanation=(
+            "**No container named `{0}` exists.**\n\n"
+            "**Fix**:\n"
+            "```bash\ndocker ps -a            # list all containers (including stopped)\ndocker ps               # list only running containers\n```\n"
+            "The container may have been removed or never created. "
+            "Create it with `docker run --name {0} <image>`.\n\n"
+            "**Gotcha**: Container names are case-sensitive and must be unique — "
+            "use `docker ps -a --filter name={0}` to search."
+        ),
+    ),
+    # ── pip (additional) ─────────────────────────────────────────────────────
+    Pattern(
+        title="pip — package not found",
+        regex=re.compile(r"ERROR: Could not find a version that satisfies the requirement (\S+)", re.IGNORECASE),
+        explanation=(
+            "**`{0}` doesn't exist on PyPI or isn't compatible with your Python version.**\n\n"
+            "**Fix**:\n"
+            "- Check the spelling: `pip index versions {0}` (pip 21.2+)\n"
+            "- Check Python version compatibility on the PyPI page\n"
+            "- Try with extras syntax: `pip install \"{0}\"`\n\n"
+            "**Gotcha**: The PyPI package name and the import name often differ — "
+            "e.g. `pip install Pillow` but `import PIL`. "
+            "Also check if the package requires a specific Python version range."
+        ),
+    ),
+    Pattern(
+        title="pip — dependency conflict",
+        regex=re.compile(r"ERROR: pip's dependency resolver .* has incompatible", re.IGNORECASE),
+        explanation=(
+            "**Two packages require incompatible versions of a shared dependency.**\n\n"
+            "**Fix**:\n"
+            "```bash\npip install --upgrade pip   # ensure pip resolver is current\n# Use a fresh virtual environment:\npython -m venv .venv && source .venv/bin/activate\npip install <package>\n```\n"
+            "Try pinning one conflicting package to a known-compatible version, "
+            "or use `pip-tools` / `poetry` for better dependency management.\n\n"
+            "**Gotcha**: Use `pip show <package>` to check which packages are causing the conflict — "
+            "look for overlapping version requirements in their metadata."
+        ),
+    ),
+    # ── npm (additional) ─────────────────────────────────────────────────────
+    Pattern(
+        title="npm — package not found (404)",
+        regex=re.compile(r"npm (?:ERR! )?404 Not Found - GET https?://registry\.npmjs\.org/([^\s'\"]+)", re.IGNORECASE),
+        explanation=(
+            "**Package `{0}` doesn't exist on npm.**\n\n"
+            "**Fix**:\n"
+            "- Check the spelling: `npm info {0}`\n"
+            "- The package may have been unpublished\n"
+            "- Check if a scoped name is needed: `@scope/{0}`\n\n"
+            "**Gotcha**: npm package names are case-sensitive. "
+            "Also, packages can be unpublished — check if an alternative or fork exists."
+        ),
+    ),
+    Pattern(
+        title="npm — permission denied (EACCES)",
+        regex=re.compile(r"npm (?:ERR! )?(?:code )?EACCES", re.IGNORECASE),
+        explanation=(
+            "**npm can't write to the global install directory (permission denied).**\n\n"
+            "**Fix** (preferred — avoid `sudo npm`):\n"
+            "```bash\n# Fix ownership of npm global dir:\nsudo chown -R $(whoami) $(npm config get prefix)/{{lib/node_modules,bin,share}}\n# Or use npx for one-off commands instead of global installs:\nnpx <tool-name>\n# Or install packages locally:\nnpm install --save-dev <tool>\n```\n\n"
+            "**Gotcha**: Never use `sudo npm install -g` — it mixes root-owned files "
+            "with user-owned files and breaks future installs."
+        ),
+    ),
+    # ── Shell/Bash (additional) ───────────────────────────────────────────────
+    Pattern(
+        title="Shell — command not found (with name)",
+        regex=re.compile(r"(?:-(?:bash|sh|zsh): )?(\S+): command not found", re.IGNORECASE),
+        explanation=(
+            "**`{0}` is not installed or not in `$PATH`.**\n\n"
+            "**Fix**:\n"
+            "```bash\nwhich {0}          # find it if installed\necho $PATH         # inspect your PATH\nbrew install {0}   # macOS\napt install {0}    # Debian/Ubuntu\n```\n\n"
+            "**Gotcha**: If you just installed `{0}`, open a new terminal or run "
+            "`source ~/.bashrc` / `source ~/.zshrc` to reload `$PATH`."
+        ),
+    ),
+    # ── Database ─────────────────────────────────────────────────────────────
+    Pattern(
+        title="PostgreSQL — authentication failed",
+        regex=re.compile(r'FATAL:\s+password authentication failed for user "([^"]+)"', re.IGNORECASE),
+        explanation=(
+            "**Wrong password for PostgreSQL user `{0}`.**\n\n"
+            "**Fix**:\n"
+            "```bash\n# Reset password as superuser:\npsql -U postgres -c \"ALTER USER {0} PASSWORD 'newpass';\"\n# Or use the PGPASSWORD env var:\nexport PGPASSWORD='yourpassword'\npsql -U {0} -d mydb\n```\n"
+            "Also check `pg_hba.conf` to ensure the authentication method allows password login.\n\n"
+            "**Gotcha**: If `pg_hba.conf` uses `trust` for local connections, "
+            "any password is accepted — check the auth method matches your setup."
+        ),
+    ),
+    Pattern(
+        title="MySQL — access denied",
+        regex=re.compile(r"ERROR 1045 \(28000\): Access denied for user '([^']+)'@'([^']+)'", re.IGNORECASE),
+        explanation=(
+            "**MySQL user `{0}` at host `{1}` can't authenticate.**\n\n"
+            "**Fix**: Grant privileges as root:\n"
+            "```sql\nGRANT ALL ON mydb.* TO '{0}'@'{1}' IDENTIFIED BY 'password';\nFLUSH PRIVILEGES;\n```\n"
+            "Or check the password is correct:\n"
+            "```bash\nmysql -u {0} -p -h {1}\n```\n\n"
+            "**Gotcha**: MySQL treats `'{0}'@'localhost'` and `'{0}'@'127.0.0.1'` as different users — "
+            "grant both if connecting via TCP/IP and Unix socket."
+        ),
+    ),
+    # ── Java ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Java — NullPointerException",
+        regex=re.compile(r"NullPointerException"),
+        explanation=(
+            "A variable or return value is `null` where an object is expected. "
+            "Common: calling a method on an uninitialized field, or a method that returns null "
+            "and is immediately chained. Fix: add null check before access, or use `Optional<T>`."
+        ),
+    ),
+    Pattern(
+        title="Java — ClassCastException",
+        regex=re.compile(r"ClassCastException: (.+?) cannot be cast(?: to(?: class)?)? (.+)"),
+        explanation=(
+            "`{0}` can't be cast to `{1}`. "
+            "Use `instanceof` before casting: `if (obj instanceof {1} x) {{ ... }}`."
+        ),
+    ),
+    Pattern(
+        title="Java — ArrayIndexOutOfBoundsException",
+        regex=re.compile(r"ArrayIndexOutOfBoundsException: Index (\d+) out of bounds for length (\d+)"),
+        explanation=(
+            "Accessed index `{0}` on an array of length `{1}`. "
+            "Valid range: 0 to `{1}-1`. Guard: `if (i < arr.length)`."
+        ),
+    ),
+    Pattern(
+        title="Java — StackOverflowError (infinite recursion)",
+        regex=re.compile(r"StackOverflowError"),
+        explanation=(
+            "Infinite or too-deep recursion. Add or fix the base case in your recursive method, "
+            "or rewrite iteratively with an explicit stack."
+        ),
+    ),
+    Pattern(
+        title="Java — NumberFormatException",
+        regex=re.compile(r'NumberFormatException: For input string: "([^"]+)"'),
+        explanation=(
+            '"{0}" can\'t be parsed as a number. '
+            "Wrap in `try {{ int n = Integer.parseInt(s); }} catch (NumberFormatException e) {{ ... }}`."
+        ),
+    ),
+    Pattern(
+        title="Java — NoSuchMethodError",
+        regex=re.compile(r"NoSuchMethod(?:Exception|Error).*?(\w+\([^)]*\))"),
+        explanation=(
+            "Method `{0}` doesn't exist at runtime. Usually a stale compiled `.class` file — "
+            "do a clean build (`mvn clean install` or `./gradlew clean build`)."
+        ),
+    ),
+    Pattern(
+        title="Java — OutOfMemoryError (heap)",
+        regex=re.compile(r"OutOfMemoryError: Java heap space"),
+        explanation=(
+            "JVM ran out of heap. Increase with `-Xmx512m`, check for memory leaks with a profiler, "
+            "and avoid holding large collections in long-lived objects."
+        ),
+    ),
+    Pattern(
+        title="Java — Uncaught exception in thread",
+        regex=re.compile(r'Exception in thread "([^"]+)" ([\w.]+(?:Exception|Error)): (.+)'),
+        explanation=(
+            "Thread `{0}` crashed with `{1}: {2}`. "
+            "Find the first `at your.package` line in the stack trace below — that's where it happened."
+        ),
+    ),
+    # ── C/C++ ────────────────────────────────────────────────────────────────
+    Pattern(
+        title="C/C++ — Segmentation fault",
+        regex=re.compile(r"[Ss]egmentation fault"),
+        explanation=(
+            "Program accessed invalid memory — null/dangling pointer, buffer overflow, or use-after-free. "
+            "Debug: `gdb ./program core` then `bt`. "
+            "Compile with `-fsanitize=address` to pinpoint the exact line."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Linker error: undefined reference",
+        regex=re.compile(r"undefined reference to '([^']+)'"),
+        explanation=(
+            "Linker can't find `{0}`. Either the library isn't linked (`-lm`, `-lpthread`, etc.), "
+            "the object file is missing from the build, or there's a C/C++ name-mangling mismatch "
+            "(use `extern \"C\"` for C functions called from C++)."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Undeclared identifier",
+        regex=re.compile(r"error: use of undeclared identifier '([^']+)'"),
+        explanation=(
+            "`{0}` hasn't been declared at this point. Check for a missing `#include`, a typo, "
+            "or that the declaration isn't hidden inside an `#ifdef` block."
+        ),
+    ),
+    Pattern(
+        title="C++ — No matching overload",
+        regex=re.compile(r"error: no matching function for call to '([^']+)'"),
+        explanation=(
+            "No overload of `{0}` matches the argument types passed. "
+            "The `note:` lines below usually list the candidates — compare argument types carefully."
+        ),
+    ),
+    Pattern(
+        title="C — Heap corruption (double free or invalid pointer)",
+        regex=re.compile(r"free\(\): invalid pointer|double free or corruption"),
+        explanation=(
+            "Memory freed twice, or a non-malloc pointer passed to `free`. "
+            "Use `valgrind --leak-check=full ./program` or `-fsanitize=address` to find the exact location."
+        ),
+    ),
+    Pattern(
+        title="C/C++ — Incompatible types",
+        regex=re.compile(r"error: incompatible types.*cannot convert '([^']+)' to '([^']+)'"),
+        explanation=(
+            "`{0}` can't implicitly convert to `{1}`. "
+            "Use an explicit cast `({1}) value`, but verify the conversion is semantically valid first."
+        ),
+    ),
+    # ── Ruby ─────────────────────────────────────────────────────────────────
+    Pattern(
+        title="Ruby — NoMethodError",
+        regex=re.compile(r"NoMethodError: undefined method '([^']+)' for ([^\n:]+)"),
+        explanation=(
+            "`{1}` doesn't have a method `.{0}`. "
+            "Check: typo in method name, wrong object type, or calling a String method on `nil`. "
+            "Use `p obj.class` to inspect the actual type."
+        ),
+    ),
+    Pattern(
+        title="Ruby — NameError: uninitialized constant",
+        regex=re.compile(r"NameError: uninitialized constant ([\w:]+)"),
+        explanation=(
+            "Constant `{0}` is not defined. Usually a missing `require`, misspelled class/module name, "
+            "or a gem not in the load path. "
+            "Check `require '{0}'.downcase` or the gem's documented require path."
+        ),
+    ),
+    Pattern(
+        title="Ruby — LoadError",
+        regex=re.compile(r"LoadError: cannot load such file -- (.+)"),
+        explanation=(
+            "Can't load `{0}`. Run `gem install {0}` or add it to your Gemfile. "
+            "For local files, use `require_relative` instead of `require`."
+        ),
+    ),
+    Pattern(
+        title="Ruby — SyntaxError",
+        regex=re.compile(r"SyntaxError: .+: unexpected (.+)"),
+        explanation=(
+            "Parser hit an unexpected `{0}`. "
+            "Usually a missing `end`, mismatched `do`/`end` or `{{`/`}}`, or wrong use of `=>` vs `:`. "
+            "Check the line number and the few lines above it."
+        ),
+    ),
+    Pattern(
+        title="Ruby — ArgumentError: wrong argument count",
+        regex=re.compile(r"ArgumentError: wrong number of arguments \(given (\d+), expected (\d+[^)]*)\)"),
+        explanation=(
+            "Called with {0} argument(s), expected {1}. "
+            "Check the method signature and match your call to it."
+        ),
+    ),
+    Pattern(
+        title="Ruby — Errno::ENOENT: file not found",
+        regex=re.compile(r"Errno::ENOENT: No such file or directory.*?-- (.+)"),
+        explanation=(
+            "File doesn't exist at that path. "
+            "Check the path string, current working directory (`Dir.pwd`), "
+            "and that the file exists before this code runs."
         ),
     ),
 ]

@@ -122,6 +122,13 @@ def explain_error(
     no_history: bool = False,
 ) -> None:
     """Explain an error, render output, save history."""
+    from .init_cmd import load_project_context, format_context as _fmt_ctx
+    _proj_ctx = load_project_context()
+    if _proj_ctx:
+        _ctx_str = _fmt_ctx(_proj_ctx)
+        if _ctx_str:
+            error_text = f"[Project context: {_ctx_str}]\n\n{error_text}"
+
     # Try the local pattern cache before hitting the API
     if not no_cache and not json_output and not fix and not dry_run and not terse:
         hit = match_pattern(error_text)

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "errex"
-version = "0.21.0"
+version = "0.23.0"
 description = "Paste or pipe any error message and get a plain-English explanation powered by Claude"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -27,7 +27,13 @@ Repository = "https://github.com/Bsel153/errex"
 "Bug Tracker" = "https://github.com/Bsel153/errex/issues"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pyyaml"]
+app = ["pywebview>=4.0"]
+scan = [
+    "zeroconf>=0.130",
+    "paho-mqtt>=2.0",
+    "python-nmap>=0.7",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -35,3 +41,4 @@ include = ["errex*"]
 
 [project.scripts]
 errex = "errex.cli:main"
+errex-mcp = "errex.mcp_server:serve"

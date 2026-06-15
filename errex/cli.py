@@ -24,9 +24,83 @@ from .explainers import (explain_exit_code, explain_http, explain_cron, explain_
 from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detect_environment,
                           print_completion, run_command, rerun_last_command, open_last_in_browser)
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
-                    check_for_update, get_env_info)
+                    check_for_update, get_env_info, notify, speak)
 from .watch import watch_file
 from .patterns import list_patterns as _list_patterns
+
+
+def _print_tickets() -> None:
+    from .tickets import get_open_tickets, load_all
+    _sev_icons = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+    open_tickets = get_open_tickets()
+    if not open_tickets:
+        all_tickets = load_all()
+        if all_tickets:
+            output.console.print("\n  [green]✓ No open tickets.[/green]  "
+                                 f"({len(all_tickets)} closed/snoozed)\n")
+        else:
+            output.console.print("\n  [dim]No tickets yet. Run [bold]errex --scan[/bold] "
+                                 "to generate tickets from findings.[/dim]\n")
+        return
+    output.console.print(f"\n  [bold]Open Tickets[/bold] ({len(open_tickets)})\n")
+    for t in open_tickets:
+        icon = _sev_icons.get(t.severity, "•")
+        gh = f"  [dim]GH #{t.github_issue_number}[/dim]" if t.github_issue_number else ""
+        notes_tag = f"  [dim]📝 {len(t.notes)} note(s)[/dim]" if t.notes else ""
+        output.console.print(f"  {icon} [bold]{t.id}[/bold]  {t.title}{gh}{notes_tag}")
+        if t.detail:
+            output.console.print(f"     [dim]{t.detail[:80]}[/dim]")
+        for note in t.notes[-2:]:
+            output.console.print(f"     [dim]📝 {note.get('text', '')[:80]}[/dim]")
+    output.console.print(
+        f"\n  [dim]Close: errex --ticket-close ID  |  "
+        f"Snooze: errex --ticket-snooze ID  |  "
+        f"Note: errex --ticket-note ID --note \"text\"[/dim]\n"
+    )
+
+
+def _ticket_action(
+    action: str,
+    ticket_id: str,
+    snooze_days: int = 7,
+    github_repo: str | None = None,
+    github_token: str | None = None,
+    discord_webhook: str | None = None,
+    sync_url: str | None = None,
+    sync_key: str | None = None,
+) -> None:
+    from .tickets import close_ticket, snooze_ticket, reopen_ticket, load_all
+    if action == "close":
+        t = close_ticket(ticket_id)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[green]✓ Closed ticket {t.id}: {t.title}[/green]")
+        if t.github_issue_number and github_repo:
+            from .github_sync import close_issue
+            resp = close_issue(t.github_issue_number, github_repo, token=github_token)
+            if "error" not in resp:
+                output.console.print(f"  [dim]GitHub Issue #{t.github_issue_number} closed.[/dim]")
+            else:
+                output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
+        if discord_webhook:
+            from .discord_notify import notify_ticket_closed
+            notify_ticket_closed(t, webhook_url=discord_webhook)
+        if sync_url or os.environ.get("ERREX_SYNC_URL"):
+            from .cloud_sync import sync_ticket_event
+            sync_ticket_event(t, "closed", url=sync_url, key=sync_key)
+    elif action == "snooze":
+        t = snooze_ticket(ticket_id, days=snooze_days)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[yellow]Snoozed ticket {t.id} for {snooze_days} day(s).[/yellow]")
+    elif action == "reopen":
+        t = reopen_ticket(ticket_id)
+        if not t:
+            output.console.print(f"[red]Ticket '{ticket_id}' not found.[/red]")
+            return
+        output.console.print(f"[cyan]Reopened ticket {t.id}: {t.title}[/cyan]")
 
 
 def main() -> None:
@@ -79,13 +153,90 @@ def main() -> None:
                         help="expose the web UI publicly via a free Cloudflare quick tunnel (no account needed)")
     parser.add_argument("--auth", default=None, metavar="USER:PASS",
                         help="enable HTTP Basic auth on the web UI (format: user:password)")
-    parser.add_argument("--scan", action="store_true", help="scan for recent error logs and pick one to explain")
+    parser.add_argument("--scan", action="store_true",
+                        help="run a security scan (firewall, CVEs, misconfigs) on this machine")
+    parser.add_argument("--scan-schedule", metavar="FREQ",
+                        choices=["hourly", "daily", "weekly"],
+                        dest="scan_schedule",
+                        help="print setup instructions for automatic scanning (hourly/daily/weekly)")
+    parser.add_argument("--scan-status", action="store_true", dest="scan_status",
+                        help="show when the last automatic scan ran")
+    parser.add_argument("--scan-network", action="store_true", dest="scan_network",
+                        help="also discover and check IoT/smart home devices on the LAN (use with --scan)")
+    parser.add_argument("--scan-severity", default=None, metavar="LEVEL", dest="scan_severity",
+                        choices=["critical", "high", "medium", "low", "info"],
+                        help="only show findings at this severity level and above (use with --scan)")
+    parser.add_argument("--scan-fix", action="store_true", dest="scan_fix",
+                        help="prompt to apply safe fixes after scanning (use with --scan)")
+    parser.add_argument("--scan-no-explain", action="store_true", dest="scan_no_explain",
+                        help="skip Claude explanations in --scan (faster, no API key needed)")
+    parser.add_argument("--scan-quiet", action="store_true", dest="scan_quiet",
+                        help="only print a one-line summary plus critical/high findings (use with --scan, ideal for scheduled scans)")
+    parser.add_argument("--scan-speak", action="store_true", dest="scan_speak",
+                        help="read the scan summary aloud using your OS's text-to-speech (accessibility; use with --scan)")
+    parser.add_argument("--simple", action="store_true", dest="simple_mode",
+                        help="stripped-down output — short titles only, no detail/explanations/icons (accessibility)")
+    parser.add_argument("--mascot", action="store_true", dest="mascot",
+                        help="have Rex (errex's mascot) deliver your scan results with a bit of personality")
+    parser.add_argument("--scan-malware", nargs="?", const="~", metavar="PATH",
+                        dest="scan_malware",
+                        help="run malware scan (heuristics + ClamAV if installed) on PATH (default: home dir)")
+    parser.add_argument("--check-hash", metavar="FILE", dest="check_hash",
+                        help="compute SHA-256 of FILE and look it up on VirusTotal")
+    parser.add_argument("--vt-api-key", metavar="KEY", dest="vt_api_key",
+                        help="VirusTotal API key for --check-hash (or set $VIRUSTOTAL_API_KEY)")
+    # ── Ticket management ───────────────────────────────────────────────────────
+    parser.add_argument("--tickets", action="store_true",
+                        help="list open tickets")
+    parser.add_argument("--ticket-close", metavar="ID", dest="ticket_close",
+                        help="close a ticket by ID")
+    parser.add_argument("--ticket-snooze", metavar="ID", dest="ticket_snooze",
+                        help="snooze a ticket for N days (default 7, use --snooze-days to change)")
+    parser.add_argument("--snooze-days", metavar="N", dest="snooze_days", type=int, default=7,
+                        help="number of days to snooze a ticket (use with --ticket-snooze)")
+    parser.add_argument("--ticket-reopen", metavar="ID", dest="ticket_reopen",
+                        help="reopen a closed or snoozed ticket")
+    parser.add_argument("--ticket-note", metavar="ID", dest="ticket_note",
+                        help="add a tech note to a ticket (use with --note \"text\")")
+    parser.add_argument("--note", metavar="TEXT", dest="note_text",
+                        help="note text to attach (use with --ticket-note)")
+    parser.add_argument("--devices", action="store_true",
+                        help="list known devices on your network (from --scan history)")
+    parser.add_argument("--device-rename", metavar="IP", dest="device_rename",
+                        help="give a device a friendly nickname, e.g. --device-rename 192.168.1.5 --name \"Living Room TV\"")
+    parser.add_argument("--name", metavar="NICKNAME", dest="device_nickname",
+                        help="nickname text (use with --device-rename)")
+    parser.add_argument("--backups", action="store_true",
+                        help="list recent auto-fix backups (files errex copied before modifying them)")
+    parser.add_argument("--restore-backup", metavar="PATH", dest="restore_backup",
+                        help="restore a backed-up file to its original location (path from --backups)")
+    parser.add_argument("--cloud-backup", action="store_true", dest="cloud_backup",
+                        help="copy errex backups into a detected cloud-sync folder (Google Drive, iCloud, Dropbox, OneDrive)")
+    parser.add_argument("--restore-point", action="store_true", dest="restore_point",
+                        help="ask your OS to take a system restore point / local snapshot (Time Machine, System Restore, timeshift) before making risky changes")
+    # ── Discord / GitHub integration ────────────────────────────────────────────
+    parser.add_argument("--discord-webhook", metavar="URL", dest="discord_webhook",
+                        help="Discord webhook URL for scan notifications (or set $ERREX_DISCORD_WEBHOOK)")
+    parser.add_argument("--github-token", metavar="TOKEN", dest="github_token",
+                        help="GitHub token for creating Issues (or set $GITHUB_TOKEN)")
+    parser.add_argument("--github-repo", metavar="OWNER/REPO", dest="github_repo",
+                        help="GitHub repo to create Issues in (e.g. myorg/myrepo)")
+    parser.add_argument("--sync-url", metavar="URL", dest="sync_url",
+                        help="opt-in: upload scan summaries and ticket events to an RHT backend (or set $ERREX_SYNC_URL)")
+    parser.add_argument("--sync-key", metavar="KEY", dest="sync_key",
+                        help="API key for --sync-url (or set $ERREX_SYNC_KEY)")
+    parser.add_argument("--verify", action="store_true",
+                        help="after --scan-fix or --fix-apply, re-run to confirm the fix worked")
     parser.add_argument("--setup", action="store_true", help="run the setup wizard (API key, environment detection, shell integration)")
+    parser.add_argument("--init", action="store_true",
+                        help="detect project tech stack and save context for richer explanations")
     parser.add_argument("--context", metavar="FILE", help="attach a code file for more targeted explanations")
     parser.add_argument("--chat", action="store_true", help="stay in a follow-up Q&A loop after the explanation")
     parser.add_argument("--tokens", action="store_true", help="show token usage after each explanation")
     parser.add_argument("--notify", action="store_true", help="send a desktop notification when the explanation is ready")
     parser.add_argument("--update", action="store_true", help="check for a newer version of errex")
+    parser.add_argument("--create-shortcut", action="store_true", dest="create_shortcut",
+                        help="create a desktop shortcut that opens the errex web UI")
     parser.add_argument("--explain-code", metavar="FILE", dest="explain_code", help="explain what a piece of code does")
     parser.add_argument("--issues", action="store_true", help="search GitHub Issues for similar errors after explaining")
     parser.add_argument("--lint", metavar="FILE", help="scan a code file for potential bugs and issues")
@@ -161,6 +312,21 @@ def main() -> None:
                         help="digest window in hours (default: 24)")
     parser.add_argument("--digest-webhook", dest="digest_webhook", default=None, metavar="URL",
                         help="send digest to a Slack/Discord webhook URL")
+    parser.add_argument("--email-report", metavar="EMAIL", dest="email_report", default=None,
+                        help="send a device health report to this address (use with --report-period)")
+    parser.add_argument("--report-period", choices=["daily", "weekly", "monthly"], default="weekly",
+                        dest="report_period",
+                        help="period for --email-report (default: weekly)")
+    parser.add_argument("--report-preview", action="store_true", dest="report_preview",
+                        help="print the HTML health report to stdout without sending")
+    parser.add_argument("--smtp-host", metavar="HOST", dest="smtp_host", default="",
+                        help="SMTP host for --email-report")
+    parser.add_argument("--smtp-port", metavar="PORT", type=int, dest="smtp_port", default=587,
+                        help="SMTP port (default: 587)")
+    parser.add_argument("--smtp-user", metavar="USER", dest="smtp_user", default="",
+                        help="SMTP username")
+    parser.add_argument("--smtp-password", metavar="PASS", dest="smtp_password", default="",
+                        help="SMTP password (prefer env var ERREX_SMTP_PASSWORD)")
     parser.add_argument("--find-name", metavar="NAME", dest="find_name",
                         help="retrieve a history entry saved with --save-as NAME")
     parser.add_argument("--timeout", metavar="N", type=int, default=30,
@@ -244,8 +410,195 @@ def main() -> None:
                         help="Red Hat product name for the ticket")
     parser.add_argument("--rht-version", dest="rht_version", default=None, metavar="VER",
                         help="product version for the ticket")
+    parser.add_argument("--mcp", action="store_true",
+                        help="start MCP server for Claude Desktop integration (communicates over stdio)")
+    parser.add_argument("--activate", metavar="KEY", help="Activate an errex Pro license key")
+    parser.add_argument("--license", action="store_true", help="Show license status")
     parser.set_defaults(**config)
     args = parser.parse_args()
+
+    if args.mcp:
+        from .mcp_server import serve
+        serve()
+        return
+
+    if args.init:
+        from .init_cmd import run_init
+        run_init()
+        return
+
+    if args.scan_schedule:
+        from ._scan_scheduler import setup_cron
+        output.console.print(setup_cron(args.scan_schedule))
+        return
+
+    if args.scan_status:
+        from ._scan_scheduler import print_scan_status
+        print_scan_status()
+        return
+
+    if getattr(args, "tickets", False):
+        _print_tickets()
+        return
+
+    if getattr(args, "ticket_close", None):
+        _ticket_action("close", args.ticket_close,
+                       github_repo=getattr(args, "github_repo", None) or config.get("github_repo"),
+                       github_token=getattr(args, "github_token", None) or config.get("github_token"),
+                       discord_webhook=(getattr(args, "discord_webhook", None)
+                                        or config.get("discord_webhook")
+                                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK")),
+                       sync_url=getattr(args, "sync_url", None) or config.get("sync_url"),
+                       sync_key=getattr(args, "sync_key", None) or config.get("sync_key"))
+        return
+
+    if getattr(args, "ticket_snooze", None):
+        _ticket_action("snooze", args.ticket_snooze,
+                       snooze_days=getattr(args, "snooze_days", 7))
+        return
+
+    if getattr(args, "ticket_reopen", None):
+        _ticket_action("reopen", args.ticket_reopen)
+        return
+
+    if getattr(args, "ticket_note", None):
+        note_text = getattr(args, "note_text", None)
+        if not note_text:
+            output.err_console.print("[red]errex: --ticket-note requires --note \"text\"[/red]")
+            sys.exit(1)
+        from .tickets import add_note
+        t = add_note(args.ticket_note, note_text)
+        if not t:
+            output.console.print(f"[red]Ticket '{args.ticket_note}' not found.[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Note added to ticket {t.id}: {t.title}[/green]")
+        output.console.print(f"  [dim]\"{note_text}\"[/dim]")
+        return
+
+    if getattr(args, "devices", False):
+        from .scanners.diagnostics import list_known_devices
+        devices = list_known_devices()
+        if not devices:
+            output.console.print("[dim]No devices known yet — run [cyan]errex --scan[/cyan] to discover devices on your network.[/dim]")
+            return
+        _status_icons = {"online": "🟢", "offline": "🔴", "unknown": "⚪"}
+        output.console.print(f"[bold]{len(devices)} known device(s):[/bold]\n")
+        for d in devices:
+            label = d["nickname"] or d["hostname"] or d["ip"]
+            icon = _status_icons.get(d["status"], "⚪")
+            output.console.print(f"  {icon} [bold]{label}[/bold]  [dim]{d['ip']}[/dim]")
+            if d["nickname"] and d["hostname"]:
+                output.console.print(f"     [dim]({d['hostname']})[/dim]")
+        output.console.print(
+            "\n[dim]Rename a device:[/dim] [cyan]errex --device-rename <ip> --name \"Living Room TV\"[/cyan]\n"
+        )
+        return
+
+    if getattr(args, "device_rename", None):
+        nickname = getattr(args, "device_nickname", None)
+        if not nickname:
+            output.err_console.print("[red]errex: --device-rename requires --name \"nickname\"[/red]")
+            sys.exit(1)
+        from .scanners.diagnostics import set_device_nickname
+        set_device_nickname(args.device_rename, nickname)
+        output.console.print(f"[green]✓ {args.device_rename} is now called \"{nickname}\"[/green]")
+        return
+
+    if getattr(args, "restore_point", False):
+        from .restore_points import create_restore_point, is_supported
+        if not is_supported():
+            output.console.print(
+                "[dim]errex doesn't know how to take a system restore point on this OS / setup. "
+                "On macOS that's Time Machine (tmutil), on Windows it's System Restore, "
+                "on Linux it's timeshift.[/dim]"
+            )
+            return
+        output.console.print("[bold]Asking your OS to create a restore point…[/bold] [dim](this uses your OS's own snapshot tool, not errex's)[/dim]")
+        resp = create_restore_point(reason="errex checkpoint")
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ {resp['tool']}: {resp['message']}[/green]")
+        output.console.print("  [dim]You can roll back to this point from your OS's recovery tools if a change goes wrong.[/dim]")
+        return
+
+    if getattr(args, "cloud_backup", False):
+        from .backup import detect_cloud_sync_folders, sync_to_cloud_folder
+        found = detect_cloud_sync_folders()
+        if not found:
+            output.console.print(
+                "[dim]No cloud-sync folders detected (Google Drive, iCloud Drive, Dropbox, OneDrive). "
+                "Install one of those desktop apps and errex can mirror your backups into it.[/dim]"
+            )
+            return
+        output.console.print(f"[bold]Found {len(found)} cloud-sync folder(s):[/bold]\n")
+        for f in found:
+            output.console.print(f"  • {f['provider']}  [dim]{f['path']}[/dim]")
+        choice = found[0]
+        try:
+            ans = input(f"\nCopy errex backups into {choice['provider']} now? [y/N]: ").strip().lower()
+        except KeyboardInterrupt:
+            ans = "n"
+        if ans != "y":
+            return
+        resp = sync_to_cloud_folder(choice["path"])
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Backups copied to {resp['synced_to']}[/green]")
+        output.console.print(f"  [dim]{choice['provider']} will sync this folder to the cloud automatically.[/dim]")
+        return
+
+    if getattr(args, "backups", False):
+        from .backup import list_backups
+        records = list_backups()
+        if not records:
+            output.console.print("[dim]No auto-fix backups yet. errex copies files here before changing them.[/dim]")
+            return
+        output.console.print(f"[bold]{len(records)} most recent backup(s):[/bold]\n")
+        for r in records:
+            output.console.print(f"  [cyan]{r['original']}[/cyan]")
+            output.console.print(f"    [dim]→ {r['backup']}  ({r['timestamp']})[/dim]")
+            output.console.print(f"    [dim]restore: errex --restore-backup \"{r['backup']}\"[/dim]\n")
+        return
+
+    if getattr(args, "restore_backup", None):
+        from .backup import restore_backup
+        resp = restore_backup(args.restore_backup)
+        if "error" in resp:
+            output.console.print(f"[red]{resp['error']}[/red]")
+            sys.exit(1)
+        output.console.print(f"[green]✓ Restored to {resp['restored_to']}[/green]")
+        return
+
+    # First-run scan (once only, no API key needed)
+    _skip_first_scan = (
+        args.scan or args.setup
+        or getattr(args, "scan_schedule", None)
+        or getattr(args, "scan_status", False)
+        or getattr(args, "scan_malware", None)
+        or getattr(args, "check_hash", None)
+        or getattr(args, "email_report", None)
+        or getattr(args, "report_preview", False)
+        or getattr(args, "tickets", False)
+        or getattr(args, "ticket_close", None)
+        or getattr(args, "ticket_snooze", None)
+        or getattr(args, "ticket_reopen", None)
+        or getattr(args, "ticket_note", None)
+        or getattr(args, "devices", False)
+        or getattr(args, "device_rename", None)
+        or getattr(args, "restore_point", False)
+        or getattr(args, "cloud_backup", False)
+        or getattr(args, "backups", False)
+        or getattr(args, "restore_backup", None)
+        or getattr(args, "create_shortcut", False)
+        or args.history is not None or args.stats
+        or args.list_profiles or args.completion or args.doctor
+    )
+    if not _skip_first_scan:
+        from ._first_run import is_first_run, run_first_scan
+        if is_first_run():
+            run_first_scan()
 
     _constants.API_TIMEOUT = args.timeout
 
@@ -257,6 +610,22 @@ def main() -> None:
 
     if args.ci:
         args.terse = True
+
+    if args.activate:
+        from .license import activate
+        result = activate(args.activate)
+        if result["success"]:
+            output.console.print(f"\n[green]✓ errex {result['tier'].capitalize()} activated![/green] "
+                                 f"Valid until {result['expiry'][:4]}/{result['expiry'][4:]}\n")
+        else:
+            output.console.print(f"\n[red]✗[/red] {result['error']}\n")
+            raise SystemExit(1)
+        return
+
+    if getattr(args, "license", False):
+        from .license import show_license_status
+        show_license_status()
+        return
 
     if args.privacy:
         from .security import get_privacy_text
@@ -505,6 +874,25 @@ def main() -> None:
         )
         return
 
+    if args.report_preview:
+        from .email_report import print_report
+        print_report(period=args.report_period)
+        return
+
+    if args.email_report:
+        from .email_report import send_email_report
+        import os as _os
+        send_email_report(
+            to_addr=args.email_report,
+            smtp_host=args.smtp_host or cfg.get("smtp_host", "localhost"),
+            smtp_port=args.smtp_port or int(cfg.get("smtp_port", 587)),
+            smtp_user=args.smtp_user or cfg.get("smtp_user", ""),
+            smtp_password=args.smtp_password or _os.environ.get("ERREX_SMTP_PASSWORD", "") or cfg.get("smtp_password", ""),
+            period=args.report_period,
+        )
+        output.console.print(f"[green]✓[/green] Health report sent to {args.email_report}")
+        return
+
     if args.digest:
         from .digest import generate_digest, format_digest_text, send_digest
         d = generate_digest(since_hours=args.digest_since)
@@ -531,12 +919,287 @@ def main() -> None:
         check_for_update()
         return
 
+    if getattr(args, "create_shortcut", False):
+        from .launcher import run_create_shortcut
+        run_create_shortcut()
+        return
+
     if args.setup:
         run_setup()
         return
 
     if args.scan:
-        scan_logs()
+        from .license import require_pro
+        require_pro("scan")
+        import json as _json
+        import os as _os
+        from .scan import run_scan, explain_findings, auto_fix, detect_platform
+        from .scanners._base import SEVERITIES
+
+        plat = detect_platform()
+        _severity_icons = {
+            "critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪",
+        }
+
+        def _progress(name, done, total):
+            output.console.print(f"  Checking [dim]{name}[/dim]…", end="\r")
+
+        output.console.print(f"\n  Scanning [bold]{plat}[/bold]…\n")
+        result = run_scan(
+            network=args.scan_network,
+            severity_filter=args.scan_severity,
+            progress_cb=_progress,
+        )
+        output.console.print(" " * 60, end="\r")  # clear progress line
+        _sync_url = getattr(args, "sync_url", None) or config.get("sync_url")
+        _sync_key = getattr(args, "sync_key", None) or config.get("sync_key")
+        try:
+            from ._scan_scheduler import log_scan_result
+            entry = log_scan_result(result)
+        except Exception:
+            entry = None
+        if entry and (_sync_url or _os.environ.get("ERREX_SYNC_URL")):
+            from .cloud_sync import sync_scan_summary
+            sync_scan_summary(entry, url=_sync_url, key=_sync_key)
+
+        if getattr(args, "json_output", False):
+            print(_json.dumps(result.to_dict(), indent=2))
+            return
+
+        if not result.findings:
+            output.console.print("  [green]✔ No issues found.[/green]\n")
+            if args.mascot and not args.simple_mode:
+                from .mascot import say as _mascot_say
+                output.console.print(f"  [dim]{_mascot_say('all_clear')}[/dim]\n")
+            if args.scan_speak:
+                speak("errex scan complete. No issues found — everything looks good.")
+            return
+
+        # Display findings grouped by severity (quiet/simple mode: critical/high only, one line each)
+        _terse = args.scan_quiet or args.simple_mode
+        _shown_severities = ("critical", "high") if _terse else SEVERITIES
+        for severity in _shown_severities:
+            for finding in result.findings:
+                if finding.severity != severity:
+                    continue
+                if args.simple_mode:
+                    output.console.print(f"  {severity.upper()}: {finding.title}")
+                else:
+                    icon = _severity_icons.get(severity, "•")
+                    output.console.print(
+                        f"\n  {icon} [bold]{severity.upper()}[/bold]  {finding.title}"
+                    )
+                if _terse:
+                    continue
+                for line in finding.detail.splitlines()[:5]:
+                    output.console.print(f"     [dim]{line}[/dim]")
+                if finding.fix_cmd:
+                    output.console.print(f"     Fix: [cyan]{finding.fix_cmd}[/cyan]")
+
+        total = len(result.findings)
+        fixable = sum(1 for f in result.findings if f.is_fixable())
+        if args.simple_mode:
+            output.console.print(f"\n  {total} finding(s), {fixable} can be auto-fixed.\n")
+        else:
+            output.console.print(
+                f"\n  ─── {total} finding(s), {fixable} auto-fixable ───────────────────────────\n"
+            )
+        if args.mascot and not args.simple_mode:
+            from .mascot import say as _mascot_say
+            output.console.print(f"  [dim]{_mascot_say('issues_found')}[/dim]\n")
+
+        if args.scan_speak:
+            _crit_high = [f for f in result.findings if f.severity in ("critical", "high")]
+            if _crit_high:
+                _spoken = (f"errex found {total} issues, including {len(_crit_high)} that need urgent attention. "
+                           + " ".join(f.title for f in _crit_high[:5]))
+            else:
+                _spoken = f"errex scan complete. Found {total} minor issue(s), nothing urgent."
+            speak(_spoken)
+
+        # Explain with Claude (skipped in quiet/simple mode — keep unattended/accessible scans terse)
+        if not args.scan_no_explain and not _terse:
+            api_key = _os.environ.get("ANTHROPIC_API_KEY")
+            if api_key:
+                output.console.print("  [bold]Explanations[/bold] (Claude)\n")
+                for finding in result.findings:
+                    if finding.severity == "info":
+                        continue
+                    icon = _severity_icons.get(finding.severity, "•")
+                    output.console.print(f"  {icon} [bold]{finding.title}[/bold]")
+
+                    def _stream(fid, tok, _fid=finding.id):
+                        if fid == _fid:
+                            output.console.print(tok, end="")
+
+                    explain_findings([finding], api_key, stream_cb=_stream)
+                    output.console.print("\n")
+
+        # Batch fix by severity
+        _auto_fixed_ids: set[str] = set()
+        if args.scan_fix and _terse:
+            output.console.print("  [dim]--scan-fix prompts are skipped in quiet/simple mode (unattended scans).[/dim]")
+        elif args.scan_fix:
+            fixable_findings = [f for f in result.findings if f.is_fixable()]
+            if not fixable_findings:
+                output.console.print("  No auto-fixable issues found.\n")
+            else:
+                _confidence_tags = {
+                    "high":   "[green]high confidence[/green]",
+                    "medium": "[yellow]medium confidence[/yellow]",
+                }
+                _fix_disc_hook = (getattr(args, "discord_webhook", None)
+                                  or config.get("discord_webhook")
+                                  or _os.environ.get("ERREX_DISCORD_WEBHOOK"))
+                _findings_by_id = {f.id: f for f in fixable_findings}
+                for severity in SEVERITIES:
+                    batch = [f for f in fixable_findings if f.severity == severity]
+                    if not batch:
+                        continue
+                    output.console.print(
+                        f"\n  Apply [bold]{len(batch)} {severity.upper()}[/bold] fix(es)?"
+                    )
+                    for f in batch:
+                        tag = _confidence_tags.get(f.fix_confidence(), "")
+                        tag = f"  [dim]({tag})[/dim]" if tag else ""
+                        output.console.print(
+                            f"    • {f.title}  [dim]→  {f.fix_cmd or 'python fix'}[/dim]{tag}"
+                        )
+                    resp = input("  [y/N] ").strip().lower()
+                    if resp == "y":
+                        fix_results = auto_fix(batch)
+                        for r in fix_results:
+                            mark = "[green]✔[/green]" if r.success else "[red]✗[/red]"
+                            output.console.print(f"  {mark} {r.message}")
+                            for b in r.backups:
+                                output.console.print(
+                                    f"     [dim]↳ backed up {b['original']} → {b['backup']}[/dim]"
+                                )
+                            if r.success:
+                                _auto_fixed_ids.add(r.finding_id)
+                                fixed_finding = _findings_by_id.get(r.finding_id)
+                                title = fixed_finding.title if fixed_finding else r.finding_id
+                                notify("errex — issue fixed", title)
+                                if _fix_disc_hook:
+                                    from .discord_notify import notify_fix_applied
+                                    notify_fix_applied(title, webhook_url=_fix_disc_hook)
+                        if args.mascot and any(r.success for r in fix_results):
+                            from .mascot import say as _mascot_say
+                            output.console.print(f"  [dim]{_mascot_say('fix_applied')}[/dim]")
+        if args.verify:
+            from .scan import verify_scan
+            output.console.print("\n[bold]Verifying fixes...[/bold]")
+            vr = verify_scan(result)
+            if vr["resolved"]:
+                output.console.print(f"[green]✓ Resolved:[/green] {', '.join(vr['resolved'])}")
+            if vr["still_present"]:
+                output.console.print(f"[yellow]⚠ Still present:[/yellow] {', '.join(vr['still_present'])}")
+            if vr["new_issues"]:
+                output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
+
+        # ── Ticket + GitHub + Discord integration ──────────────────────────────
+        # Flags take priority; fall back to config file, then env vars
+        _gh_repo    = getattr(args, "github_repo", None)  or config.get("github_repo")
+        _gh_token   = getattr(args, "github_token", None) or config.get("github_token")
+        _disc_hook  = (getattr(args, "discord_webhook", None)
+                       or config.get("discord_webhook")
+                       or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK"))
+        _sync_on = bool(_sync_url or _os.environ.get("ERREX_SYNC_URL"))
+        if result.findings and (_gh_repo or _disc_hook or _sync_on):
+            from .tickets import create_ticket, find_by_finding_id
+            from .discord_notify import notify_new_ticket, notify_scan_summary
+            if _sync_on:
+                from .cloud_sync import sync_ticket_event
+            if _gh_repo:
+                from .github_sync import create_issue
+            new_tickets = 0
+            for finding in result.findings:
+                if finding.severity not in ("critical", "high", "medium"):
+                    continue
+                if finding.id in _auto_fixed_ids:
+                    continue  # successfully auto-fixed this run — don't open a ticket
+                existing = find_by_finding_id(finding.id)
+                if existing and existing.effective_status() in ("open", "snoozed"):
+                    continue  # active ticket exists; skip (closed tickets allow re-ticketing)
+                ticket = create_ticket(
+                    title=finding.title,
+                    severity=finding.severity,
+                    detail=finding.detail,
+                    source="scan",
+                    finding_id=finding.id,
+                )
+                new_tickets += 1
+                gh_issue_url = None
+                if _gh_repo:
+                    resp = create_issue(ticket, _gh_repo, token=_gh_token)
+                    if "number" in resp:
+                        from .tickets import update_ticket
+                        update_ticket(ticket.id, github_issue_number=resp["number"])
+                        owner_repo = _gh_repo
+                        gh_issue_url = f"https://github.com/{owner_repo}/issues/{resp['number']}"
+                        output.console.print(
+                            f"  [dim]GitHub Issue #{resp['number']} opened → {gh_issue_url}[/dim]"
+                        )
+                    elif "error" in resp:
+                        output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
+                if _disc_hook:
+                    notify_new_ticket(ticket, webhook_url=_disc_hook, github_issue_url=gh_issue_url)
+                if _sync_on:
+                    sync_ticket_event(ticket, "opened", url=_sync_url, key=_sync_key)
+            if _disc_hook:
+                from .tickets import get_open_tickets
+                _open = get_open_tickets()
+                open_tickets = len(_open)
+                crit_count   = sum(1 for t in _open if t.severity == "critical")
+                notify_scan_summary(open_tickets, crit_count, new_tickets, webhook_url=_disc_hook)
+            if new_tickets:
+                output.console.print(f"\n  [cyan]{new_tickets} new ticket(s) created.[/cyan] Run [bold]errex --tickets[/bold] to view.\n")
+        return
+
+    if getattr(args, "scan_malware", None):
+        from pathlib import Path as _Path
+        from .scan import run_malware_scan
+        from .scanners._base import SEVERITIES as _SEV
+        _mpath = args.scan_malware
+        if _mpath == "~":
+            _mpath = str(_Path.home())
+        output.console.print(f"\n[bold]Malware scan:[/bold] {_mpath}\n")
+        _sev_icons = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
+        def _mscan_progress(name, done, total):
+            output.console.print(f"  [dim]checking {name}…[/dim]", end="\r")
+        _mresult = run_malware_scan(path=_mpath, progress_cb=_mscan_progress)
+        output.console.print(" " * 60, end="\r")  # clear progress line
+        if not _mresult.findings:
+            output.console.print("  [green]✓ No malware indicators found.[/green]\n")
+        else:
+            for _f in sorted(_mresult.findings, key=lambda x: x.severity_rank()):
+                _icon = _sev_icons.get(_f.severity, "•")
+                output.console.print(f"  {_icon} [{_f.severity.upper()}] {_f.title}")
+                if _f.detail:
+                    for _line in _f.detail.splitlines()[:5]:
+                        output.console.print(f"      [dim]{_line}[/dim]")
+                if _f.fix_cmd:
+                    output.console.print(f"      [cyan]Fix:[/cyan] {_f.fix_cmd}")
+                output.console.print()
+        return
+
+    if getattr(args, "check_hash", None):
+        from .scanners.virustotal import check_file, format_result
+        _vt_key = getattr(args, "vt_api_key", None)
+        output.console.print(f"\n[bold]VirusTotal hash check:[/bold] {args.check_hash}\n")
+        _vt_result = check_file(args.check_hash, api_key=_vt_key)
+        _summary = format_result(_vt_result)
+        if "MALICIOUS" in _summary:
+            output.console.print(f"  [red]{_summary}[/red]")
+        elif "SUSPICIOUS" in _summary:
+            output.console.print(f"  [yellow]{_summary}[/yellow]")
+        elif "CLEAN" in _summary:
+            output.console.print(f"  [green]{_summary}[/green]")
+        else:
+            output.console.print(f"  [dim]{_summary}[/dim]")
+        if "link" in _vt_result:
+            output.console.print(f"\n  Full report: {_vt_result['link']}")
+        output.console.print()
         return
 
     if args.export:
@@ -545,6 +1208,8 @@ def main() -> None:
         return
 
     if args.explain_diff is not None:
+        from .license import require_pro
+        require_pro("explain_diff")
         if args.explain_diff == "-" or args.explain_diff is True:
             if not sys.stdin.isatty():
                 diff_text = sys.stdin.read().strip()
@@ -567,6 +1232,8 @@ def main() -> None:
         return
 
     if args.test_gen:
+        from .license import require_pro
+        require_pro("test_gen")
         error_text_for_test = None
         if not sys.stdin.isatty():
             error_text_for_test = sys.stdin.read().strip() or None
@@ -593,6 +1260,8 @@ def main() -> None:
         return
 
     if args.explain_code:
+        from .license import require_pro
+        require_pro("explain_code")
         explain_code(
             args.explain_code,
             model=args.model,
