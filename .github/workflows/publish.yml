@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version being published (e.g. 0.23.0)"
+        required: false
+        default: "0.23.0"
 
 jobs:
   publish:
