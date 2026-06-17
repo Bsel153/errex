@@ -2,6 +2,17 @@
 
 All notable changes to errex are documented here.
 
+## [0.24.0] — 2026-06-16
+### Added
+- `--review-pr URL`: review a GitHub pull request using Claude — fetches the diff, provides structured code review with file:line references
+- `--slack-webhook URL`: Slack incoming webhook notifications for scan findings, ticket events, and summaries (complements Discord integration)
+- `--jira-project KEY` / `--jira-url` / `--jira-user` / `--jira-token`: create Jira issues from scan findings with severity-based priority mapping
+- `--prometheus PORT`: expose errex metrics (error count, open tickets by severity, health streak) in Prometheus text format on `localhost:PORT/metrics`
+- `--init-project`: create a `.errex.yml` project config in the current directory with shared team settings (model, scanner options, custom patterns)
+- `--auto-scan MINUTES`: daemon mode — run scans on an interval, diff from last scan, alert only on new or resolved findings; supports Slack/Discord webhooks
+- `--suggest-fixes`: scan the system and ask Claude for concrete fix commands for each finding
+- `--force`: overwrite existing files (used with `--init-project`)
+
 ## [0.23.0] — 2026-06-15
 ### Added
 - `--backups`: list auto-fix backups (newest first); files are snapshotted to `~/.errex_backups/` before any fix is applied

@@ -414,6 +414,31 @@ def main() -> None:
                         help="start MCP server for Claude Desktop integration (communicates over stdio)")
     parser.add_argument("--activate", metavar="KEY", help="Activate an errex Pro license key")
     parser.add_argument("--license", action="store_true", help="Show license status")
+
+    # v0.24.0 flags
+    parser.add_argument("--review-pr", metavar="URL", dest="review_pr",
+                        help="review a GitHub pull request using Claude (pass PR URL)")
+    parser.add_argument("--slack-webhook", metavar="URL", dest="slack_webhook",
+                        help="Slack incoming webhook URL for notifications")
+    parser.add_argument("--jira-project", metavar="KEY", dest="jira_project",
+                        help="Jira project key for creating issues from scan findings")
+    parser.add_argument("--jira-url", metavar="URL", dest="jira_url",
+                        help="Jira instance URL (e.g. https://myteam.atlassian.net)")
+    parser.add_argument("--jira-user", metavar="EMAIL", dest="jira_user",
+                        help="Jira username/email for authentication")
+    parser.add_argument("--jira-token", metavar="TOKEN", dest="jira_token",
+                        help="Jira API token (prefer env var JIRA_TOKEN)")
+    parser.add_argument("--prometheus", metavar="PORT", type=int, dest="prometheus_port",
+                        help="expose Prometheus metrics on localhost:PORT/metrics")
+    parser.add_argument("--init-project", action="store_true", dest="init_project",
+                        help="create a .errex.yml project config in the current directory")
+    parser.add_argument("--auto-scan", metavar="MINUTES", type=int, dest="auto_scan",
+                        help="run scans every N minutes in daemon mode, alert on changes")
+    parser.add_argument("--suggest-fixes", action="store_true", dest="suggest_fixes",
+                        help="scan and ask Claude for concrete fix commands for each finding")
+    parser.add_argument("--force", action="store_true",
+                        help="overwrite existing files (used with --init-project)")
+
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -425,6 +450,54 @@ def main() -> None:
     if args.init:
         from .init_cmd import run_init
         run_init()
+        return
+
+    if getattr(args, "review_pr", None):
+        from .review_pr import review_pr
+        review_pr(
+            args.review_pr,
+            model=args.model,
+            token=getattr(args, "github_token", None) or config.get("github_token"),
+            copy=args.copy or False,
+            show_tokens=getattr(args, "tokens", False),
+            perf=args.perf,
+        )
+        return
+
+    if getattr(args, "prometheus_port", None):
+        from .prometheus import serve_prometheus
+        serve_prometheus(args.prometheus_port, host=args.host)
+        return
+
+    if getattr(args, "init_project", False):
+        from .project_config import init_project
+        init_project(force=getattr(args, "force", False))
+        return
+
+    if getattr(args, "auto_scan", None):
+        from .auto_scan import auto_scan
+        auto_scan(
+            interval_minutes=args.auto_scan,
+            severity=getattr(args, "scan_severity", None),
+            slack_webhook=(getattr(args, "slack_webhook", None)
+                           or config.get("slack_webhook")
+                           or __import__("os").environ.get("ERREX_SLACK_WEBHOOK")),
+            discord_webhook=(getattr(args, "discord_webhook", None)
+                             or config.get("discord_webhook")
+                             or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK")),
+            quiet=getattr(args, "scan_quiet", False),
+        )
+        return
+
+    if getattr(args, "suggest_fixes", False):
+        from .suggest_fixes import suggest_fixes
+        suggest_fixes(
+            model=args.model,
+            severity=getattr(args, "scan_severity", None),
+            copy=args.copy or False,
+            show_tokens=getattr(args, "tokens", False),
+            perf=args.perf,
+        )
         return
 
     if args.scan_schedule:
@@ -1097,15 +1170,20 @@ def main() -> None:
             if vr["new_issues"]:
                 output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
 
-        # ── Ticket + GitHub + Discord integration ──────────────────────────────
+        # ── Ticket + GitHub + Discord + Slack + Jira integration ────────────────
         # Flags take priority; fall back to config file, then env vars
         _gh_repo    = getattr(args, "github_repo", None)  or config.get("github_repo")
         _gh_token   = getattr(args, "github_token", None) or config.get("github_token")
         _disc_hook  = (getattr(args, "discord_webhook", None)
                        or config.get("discord_webhook")
                        or __import__("os").environ.get("ERREX_DISCORD_WEBHOOK"))
+        _slack_hook = (getattr(args, "slack_webhook", None)
+                       or config.get("slack_webhook")
+                       or __import__("os").environ.get("ERREX_SLACK_WEBHOOK"))
+        _jira_proj  = (getattr(args, "jira_project", None) or config.get("jira_project")
+                       or __import__("os").environ.get("JIRA_PROJECT"))
         _sync_on = bool(_sync_url or _os.environ.get("ERREX_SYNC_URL"))
-        if result.findings and (_gh_repo or _disc_hook or _sync_on):
+        if result.findings and (_gh_repo or _disc_hook or _slack_hook or _jira_proj or _sync_on):
             from .tickets import create_ticket, find_by_finding_id
             from .discord_notify import notify_new_ticket, notify_scan_summary
             if _sync_on:
@@ -1144,14 +1222,34 @@ def main() -> None:
                         output.console.print(f"  [yellow]GitHub: {resp['error']}[/yellow]")
                 if _disc_hook:
                     notify_new_ticket(ticket, webhook_url=_disc_hook, github_issue_url=gh_issue_url)
+                if _slack_hook:
+                    from .slack_notify import notify_new_ticket as _slack_new
+                    _slack_new(ticket, webhook_url=_slack_hook, github_issue_url=gh_issue_url)
+                if _jira_proj:
+                    from .jira_sync import create_issue as _jira_create
+                    jr = _jira_create(
+                        ticket,
+                        jira_url=getattr(args, "jira_url", None) or config.get("jira_url"),
+                        jira_user=getattr(args, "jira_user", None) or config.get("jira_user"),
+                        jira_token=getattr(args, "jira_token", None) or config.get("jira_token"),
+                        project_key=_jira_proj,
+                    )
+                    if "key" in jr:
+                        output.console.print(f"  [dim]Jira {jr['key']} created → {jr.get('url', '')}[/dim]")
+                    elif "error" in jr:
+                        output.console.print(f"  [yellow]Jira: {jr['error']}[/yellow]")
                 if _sync_on:
                     sync_ticket_event(ticket, "opened", url=_sync_url, key=_sync_key)
-            if _disc_hook:
+            if _disc_hook or _slack_hook:
                 from .tickets import get_open_tickets
                 _open = get_open_tickets()
                 open_tickets = len(_open)
                 crit_count   = sum(1 for t in _open if t.severity == "critical")
-                notify_scan_summary(open_tickets, crit_count, new_tickets, webhook_url=_disc_hook)
+                if _disc_hook:
+                    notify_scan_summary(open_tickets, crit_count, new_tickets, webhook_url=_disc_hook)
+                if _slack_hook:
+                    from .slack_notify import notify_scan_summary as _slack_summary
+                    _slack_summary(open_tickets, crit_count, new_tickets, webhook_url=_slack_hook)
             if new_tickets:
                 output.console.print(f"\n  [cyan]{new_tickets} new ticket(s) created.[/cyan] Run [bold]errex --tickets[/bold] to view.\n")
         return

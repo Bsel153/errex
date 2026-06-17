@@ -433,3 +433,49 @@ def test_privacy_flag_mentions_data(tmp_path):
 def test_show_access_flag_exits_zero():
     r = run(["--show-access"])
     assert r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# v0.24.0 flags
+# ---------------------------------------------------------------------------
+
+def test_review_pr_flag_accepted():
+    r = run(["--review-pr", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_slack_webhook_flag_accepted():
+    r = run(["--slack-webhook", "https://hooks.slack.com/x", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_jira_flags_accepted():
+    r = run(["--jira-project", "PROJ", "--jira-url", "https://x.atlassian.net",
+             "--jira-user", "u", "--jira-token", "t", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_prometheus_flag_accepted():
+    r = run(["--prometheus", "9100", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_init_project_creates_file(tmp_path):
+    r = run(["--init-project"], env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE})
+    assert r.returncode == 0
+    assert ".errex.yml" in r.stdout or "Created" in r.stdout
+
+
+def test_auto_scan_flag_accepted():
+    r = run(["--auto-scan", "60", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_suggest_fixes_flag_accepted():
+    r = run(["--suggest-fixes", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_force_flag_accepted():
+    r = run(["--force", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
