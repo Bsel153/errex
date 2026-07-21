@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+import anthropic
+
 from . import output, _constants
 
 _REVIEW_PROMPT = (
@@ -64,8 +66,6 @@ def review_code(
 
     output.console.rule(f"[bold cyan]errex — Code Review: {Path(path).name}[/bold cyan]")
     print()
-
-    import anthropic
 
     client = anthropic.Anthropic(timeout=_constants.API_TIMEOUT)
     collected: list[str] = []

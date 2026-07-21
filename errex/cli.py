@@ -20,7 +20,8 @@ from .cache import clear_cache, cache_stats
 from .code_tools import (lint_file, explain_code, generate_test, explain_diff, explain_inline,
                          grep_and_explain, summarize_log)
 from .explainers import (explain_exit_code, explain_http, explain_cron, explain_sql,
-                         explain_env_var, explain_yaml, explain_dockerfile, explain_regex)
+                         explain_env_var, explain_yaml, explain_dockerfile, explain_regex,
+                         explain_env_file)
 from .setup_tools import (run_setup, run_doctor, install_shell, scan_logs, detect_environment,
                           print_completion, run_command, rerun_last_command, open_last_in_browser)
 from .utils import (read_file, get_error_input, extract_snippet, redact_secrets, format_json_error,
@@ -439,6 +440,18 @@ def main() -> None:
     parser.add_argument("--force", action="store_true",
                         help="overwrite existing files (used with --init-project)")
 
+    # v0.25.0 flags
+    parser.add_argument("--review-code", metavar="FILE", dest="review_code",
+                        help="review a local source file for bugs, security issues, and style")
+    parser.add_argument("--chat-about", metavar="TOPIC", dest="chat_about",
+                        help="start an interactive multi-turn chat with Claude about a topic")
+    parser.add_argument("--notify-slack", action="store_true", dest="notify_slack",
+                        help="post the error explanation to Slack after explaining (requires --slack-webhook)")
+    parser.add_argument("--explain-env-file", metavar="FILE", dest="explain_env_file",
+                        help="parse a .env file and print a table of keys, masked values, and descriptions")
+    parser.add_argument("--scan-diff", action="store_true", dest="scan_diff",
+                        help="compare current scan to the last auto-scan state; show new and resolved findings")
+
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -498,6 +511,83 @@ def main() -> None:
             show_tokens=getattr(args, "tokens", False),
             perf=args.perf,
         )
+        return
+
+    if getattr(args, "review_code", None):
+        from .review_code import review_code
+        review_code(
+            args.review_code,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=getattr(args, "tokens", False),
+            perf=args.perf,
+        )
+        return
+
+    if getattr(args, "chat_about", None):
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            output.err_console.print(
+                "[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]"
+            )
+            sys.exit(1)
+        import anthropic as _anthropic
+        _chat_model = args.model or os.environ.get("ERREX_MODEL") or _constants.CONFIG_DEFAULTS["model"]
+        _chat_client = _anthropic.Anthropic(timeout=_constants.API_TIMEOUT)
+        _topic = args.chat_about
+        output.console.rule(f"[bold cyan]errex — Chat: {_topic[:60]}[/bold cyan]")
+        output.console.print("[dim]Press Enter on an empty line or Ctrl+C to exit.[/dim]\n")
+        _chat_messages: list = [{"role": "user", "content": f"Topic: {_topic}"}]
+        # Initial response
+        _collected: list[str] = []
+        try:
+            with _chat_client.messages.stream(
+                model=_chat_model,
+                max_tokens=1024,
+                messages=_chat_messages,
+            ) as _stream:
+                for _tok in _stream.text_stream:
+                    print(_tok, end="", flush=True)
+                    _collected.append(_tok)
+        except _anthropic.APIError as _e:
+            output.err_console.print(f"\n[red]errex: API error — {_e}[/red]")
+            sys.exit(2)
+        print("\n")
+        _chat_messages.append({"role": "assistant", "content": "".join(_collected)})
+        while True:
+            try:
+                _user_in = input("You: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not _user_in:
+                break
+            _chat_messages.append({"role": "user", "content": _user_in})
+            _collected = []
+            print("Claude: ", end="", flush=True)
+            try:
+                with _chat_client.messages.stream(
+                    model=_chat_model,
+                    max_tokens=1024,
+                    messages=_chat_messages,
+                ) as _stream:
+                    for _tok in _stream.text_stream:
+                        print(_tok, end="", flush=True)
+                        _collected.append(_tok)
+            except _anthropic.APIError as _e:
+                output.err_console.print(f"\n[red]errex: API error — {_e}[/red]")
+                sys.exit(2)
+            print("\n")
+            _chat_messages.append({"role": "assistant", "content": "".join(_collected)})
+        return
+
+    if getattr(args, "explain_env_file", None):
+        from .explainers import explain_env_file
+        explain_env_file(args.explain_env_file)
+        return
+
+    if getattr(args, "scan_diff", False):
+        from .scan_diff import scan_diff
+        scan_diff(severity=getattr(args, "scan_severity", None))
         return
 
     if args.scan_schedule:
@@ -1453,6 +1543,19 @@ def main() -> None:
         )
         return
 
+    _slack_explain_url: str | None = None
+    if getattr(args, "notify_slack", False):
+        _slack_explain_url = (
+            getattr(args, "slack_webhook", None)
+            or config.get("slack_webhook")
+            or os.environ.get("ERREX_SLACK_WEBHOOK")
+        )
+        if not _slack_explain_url:
+            output.err_console.print(
+                "[yellow]errex: --notify-slack requires --slack-webhook URL "
+                "or $ERREX_SLACK_WEBHOOK[/yellow]"
+            )
+
     explain_error(
         error_text,
         model=args.model,
@@ -1478,6 +1581,7 @@ def main() -> None:
         no_cache=args.no_cache,
         use_cache=not args.no_cache,
         no_history=args.no_history,
+        slack_explain_url=_slack_explain_url,
     )
 
     if args.open_ticket:

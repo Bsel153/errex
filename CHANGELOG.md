@@ -2,6 +2,14 @@
 
 All notable changes to errex are documented here.
 
+## [0.25.0] — 2026-07-21
+### Added
+- `--review-code FILE`: send any local source file to Claude for a structured code review — bugs, security issues, style, and performance; respects `--model`, `--copy`, `--perf`, `--tokens`
+- `--chat-about TOPIC`: open a multi-turn interactive Q&A session with Claude about any topic (e.g. a scan finding or error); loop continues until blank line or Ctrl+C
+- `--notify-slack`: after a successful error explanation, post the full explanation to Slack (requires `--slack-webhook` or `$ERREX_SLACK_WEBHOOK`); added `notify_explanation` to `slack_notify.py`
+- `--explain-env-file FILE`: parse a `.env` file and print a table of keys, masked values, and descriptions using the built-in `ENV_VARS` dictionary; no API call needed
+- `--scan-diff`: compare the current scan result against the previous state saved by `--auto-scan`; prints new findings and resolved findings; shows all as new when no previous state exists
+
 ## [0.24.0] — 2026-06-16
 ### Added
 - `--review-pr URL`: review a GitHub pull request using Claude — fetches the diff, provides structured code review with file:line references

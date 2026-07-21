@@ -4,6 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import output
+from .scan import run_scan, detect_platform
+from .scanners._base import SEVERITIES
+from .auto_scan import _load_last_findings
 
 _STATE_FILE = Path.home() / ".errex_autoscan_state.json"
 
@@ -16,9 +19,6 @@ def scan_diff(severity: str | None = None) -> None:
     (in previous but not current).  If no previous state exists, all current
     findings are shown as new.
     """
-    from .scan import run_scan, detect_platform
-    from .scanners._base import SEVERITIES
-    from .auto_scan import _load_last_findings
 
     prev_ids = _load_last_findings(_STATE_FILE)
 

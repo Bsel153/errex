@@ -479,3 +479,106 @@ def test_suggest_fixes_flag_accepted():
 def test_force_flag_accepted():
     r = run(["--force", "--help"])
     assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# v0.25.0 flags
+# ---------------------------------------------------------------------------
+
+def test_review_code_flag_accepted():
+    r = run(["--review-code", "somefile.py", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_review_code_missing_api_key(tmp_path):
+    """--review-code exits 1 when ANTHROPIC_API_KEY is missing."""
+    src = tmp_path / "hello.py"
+    src.write_text("print('hello')\n")
+    r = run(
+        ["--review-code", str(src)],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    # Empty string does not satisfy the check — should exit 1
+    assert r.returncode == 1
+    assert "ANTHROPIC_API_KEY" in (r.stdout + r.stderr)
+
+
+def test_review_code_missing_file(tmp_path):
+    """--review-code exits 1 when the file does not exist."""
+    r = run(
+        ["--review-code", str(tmp_path / "no_such_file.py")],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": "fake-key"},
+    )
+    assert r.returncode == 1
+    assert "not found" in (r.stdout + r.stderr).lower()
+
+
+def test_chat_about_flag_accepted():
+    r = run(["--chat-about", "SSH weak config", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_chat_about_missing_api_key(tmp_path):
+    """--chat-about exits 1 when ANTHROPIC_API_KEY is missing."""
+    r = run(
+        ["--chat-about", "test topic"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.returncode == 1
+    assert "ANTHROPIC_API_KEY" in (r.stdout + r.stderr)
+
+
+def test_notify_slack_flag_accepted():
+    r = run(["--notify-slack", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_env_file_flag_accepted():
+    r = run(["--explain-env-file", "somefile.env", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_env_file_basic(tmp_path):
+    """--explain-env-file prints a table for a simple .env file."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("PORT=8080\nDEBUG=true\n")
+    r = run(
+        ["--explain-env-file", str(env_file)],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    assert "PORT" in r.stdout
+    assert "DEBUG" in r.stdout
+
+
+def test_explain_env_file_masks_secrets(tmp_path):
+    """--explain-env-file masks secret-looking values."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("API_KEY=supersecret123\nPORT=3000\n")
+    r = run(
+        ["--explain-env-file", str(env_file)],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    assert "API_KEY" in r.stdout
+    assert "supersecret123" not in r.stdout
+    assert "PORT" in r.stdout
+    assert "3000" in r.stdout
+
+
+def test_explain_env_file_missing_file(tmp_path):
+    """--explain-env-file exits 1 when the file does not exist."""
+    r = run(
+        ["--explain-env-file", str(tmp_path / "no_such.env")],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 1
+    assert "not found" in (r.stdout + r.stderr).lower()
+
+
+def test_scan_diff_flag_accepted():
+    r = run(["--scan-diff", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
