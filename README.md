@@ -260,6 +260,84 @@ errex --restore-point         # create an OS restore point before a big fix
 | `--sync-url URL` | Remote endpoint to sync scan summaries and ticket events |
 | `--sync-key KEY` | API key for the sync endpoint (or set `ERREX_SYNC_KEY` env var) |
 
+### PR review
+
+```bash
+errex --review-pr https://github.com/owner/repo/pull/42
+errex --review-pr owner/repo#42   # shorthand
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--review-pr URL` | Fetch a GitHub PR diff and get a structured Claude code review (summary, issues, suggestions, verdict) |
+
+### Slack notifications
+
+| Flag | What it does |
+|------|-------------|
+| `--slack-webhook URL` | Slack incoming webhook URL for scan summaries and ticket events (or set `ERREX_SLACK_WEBHOOK`) |
+
+### Jira integration
+
+```bash
+errex --scan --jira-project SEC --jira-url https://myteam.atlassian.net \
+      --jira-user me@co.com --jira-token $JIRA_TOKEN
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--jira-project KEY` | Jira project key — creates issues for each new scan finding |
+| `--jira-url URL` | Jira instance base URL |
+| `--jira-user EMAIL` | Jira username / email |
+| `--jira-token TOKEN` | Jira API token (prefer env var `JIRA_TOKEN`) |
+
+### Prometheus metrics
+
+```bash
+errex --prometheus 9100   # exposes http://localhost:9100/metrics
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--prometheus PORT` | Start a metrics server exposing error counts, open tickets by severity, and health streak in Prometheus text format |
+
+### Project config
+
+```bash
+errex --init-project          # creates .errex.yml in current directory
+errex --init-project --force  # overwrite existing
+```
+
+Commit `.errex.yml` to share settings (model, scanner options, ignored findings) across your team.
+
+| Flag | What it does |
+|------|-------------|
+| `--init-project` | Create a `.errex.yml` project config in the current directory |
+| `--force` | Overwrite existing file (used with `--init-project`) |
+
+### Auto-scan daemon
+
+```bash
+errex --auto-scan 60                                    # scan every 60 minutes
+errex --auto-scan 30 --slack-webhook $SLACK_URL         # alert on new findings
+errex --auto-scan 60 --scan-severity medium             # medium+ only
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--auto-scan MINUTES` | Run scans on an interval; alert only when findings change (new or resolved) |
+
+### AI fix suggestions
+
+```bash
+errex --suggest-fixes
+errex --suggest-fixes --scan-severity high
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--suggest-fixes` | Scan the system and ask Claude for concrete shell commands to fix each finding |
+
 ### Pro license
 
 ```bash
