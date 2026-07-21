@@ -382,6 +382,88 @@ def explain_dockerfile(path: str, model: str, copy: bool, show_tokens: bool, per
         output.copy_to_clipboard(response)
 
 
+def explain_env_file(path: str) -> None:
+    """Read a .env file and print a table: key | masked value | description."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    # Patterns that suggest a value is a secret and should be masked
+    _SECRET_KEYS = _re.compile(
+        r"(secret|token|key|password|passwd|pwd|api_key|apikey|auth|credential|private)",
+        _re.IGNORECASE,
+    )
+    _SECRET_VALUE = _re.compile(
+        r"^(sk-|ghp_|ghs_|xoxb-|ya29\.|eyJ|AKIA)",
+    )
+
+    try:
+        text = _Path(path).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        output.err_console.print(f"[red]errex: file not found: {path!r}[/red]")
+        import sys
+        sys.exit(1)
+    except OSError as e:
+        output.err_console.print(f"[red]errex: cannot read {path!r}: {e}[/red]")
+        import sys
+        sys.exit(1)
+
+    from rich.table import Table
+
+    output.console.rule(f"[bold cyan]errex — Env File: {_Path(path).name}[/bold cyan]")
+    output.console.print()
+
+    tbl = Table(show_header=True, show_lines=False, box=None, expand=False)
+    tbl.add_column("KEY", style="cyan", no_wrap=True)
+    tbl.add_column("VALUE", style="dim", no_wrap=True)
+    tbl.add_column("WHAT IT DOES", style="")
+
+    found = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, raw_val = line.partition("=")
+        key = key.strip()
+        raw_val = raw_val.strip().strip('"').strip("'")
+        if not key:
+            continue
+        found += 1
+
+        # Mask value if it looks like a secret
+        looks_secret = bool(_SECRET_KEYS.search(key)) or bool(_SECRET_VALUE.match(raw_val))
+        if looks_secret:
+            display_val = raw_val[:3] + "***" if len(raw_val) > 3 else "***"
+        else:
+            display_val = raw_val[:40] + ("…" if len(raw_val) > 40 else "")
+        if not display_val:
+            display_val = "[dim](not set)[/dim]"
+
+        # Look up description
+        desc = _constants.ENV_VARS.get(key.upper()) or _constants.ENV_VARS.get(key)
+        if desc:
+            # Trim to first sentence
+            first_sentence = desc.split(". ")[0]
+            desc_display = first_sentence[:100] + ("…" if len(first_sentence) > 100 else "")
+        else:
+            desc_display = "[dim](custom / unknown)[/dim]"
+
+        tbl.add_row(key, display_val, desc_display)
+
+    if found == 0:
+        output.console.print("[dim]No KEY=VALUE pairs found.[/dim]")
+    else:
+        output.console.print(tbl)
+        output.console.print(
+            f"\n[dim]{found} variable(s) — values containing 'secret', 'key', 'token', "
+            f"'password' or known prefixes are masked.[/dim]"
+        )
+
+    output.console.print()
+    output.console.rule(style="dim")
+
+
 def explain_regex(pattern: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
     """Explain a regular expression in plain English."""
     if not os.environ.get("ANTHROPIC_API_KEY"):

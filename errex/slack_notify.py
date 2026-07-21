@@ -76,6 +76,27 @@ def notify_fix_applied(title: str, webhook_url: str | None = None) -> dict:
     return _post(url, {"text": f":white_check_mark: *errex auto-fixed an issue*\n>{title}"})
 
 
+def notify_explanation(
+    text: str,
+    error_snippet: str,
+    webhook_url: str | None = None,
+) -> dict:
+    """Post an error explanation to Slack after the main explain flow completes."""
+    url = _get_webhook(webhook_url)
+    if not url:
+        return {"error": "No Slack webhook URL. Set $ERREX_SLACK_WEBHOOK or pass --slack-webhook."}
+
+    snippet = error_snippet[:200] + ("…" if len(error_snippet) > 200 else "")
+    body = text[:1200] + ("\n_(truncated — run errex locally for full output)_" if len(text) > 1200 else "")
+
+    message = (
+        f":mag: *errex — Error Explained*\n"
+        f">*Error snippet:* `{snippet}`\n\n"
+        f"{body}"
+    )
+    return _post(url, {"text": message})
+
+
 def notify_scan_summary(
     open_count: int,
     critical_count: int,

@@ -120,6 +120,7 @@ def explain_error(
     no_cache: bool = False,
     use_cache: bool = True,
     no_history: bool = False,
+    slack_explain_url: str | None = None,
 ) -> None:
     """Explain an error, render output, save history."""
     from .init_cmd import load_project_context, format_context as _fmt_ctx
@@ -220,6 +221,10 @@ def explain_error(
 
     if webhook:
         post_webhook(webhook, error_text, response, model)
+
+    if slack_explain_url and response:
+        from .slack_notify import notify_explanation
+        notify_explanation(response, error_text[:200], slack_explain_url)
 
     if chat and sys.stdin.isatty():
         chat_loop(error_text, response, model, lang)
