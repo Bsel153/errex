@@ -565,3 +565,42 @@ def open_last_in_browser() -> None:
 
     webbrowser.open(f"file://{tmp}")
     output.console.print(f"[green]Opened in browser[/green] [dim]({tmp})[/dim]")
+
+
+_AUTO_EXPLAIN_SNIPPET = """\
+_errex_trap() { local rc=$?; [ $rc -ne 0 ] && errex --explain-exit $rc 2>/dev/null; }
+trap '_errex_trap' ERR
+"""
+
+_AUTO_EXPLAIN_INSTRUCTIONS = """\
+Add the following snippet to your shell config file to automatically explain
+non-zero exit codes whenever a command fails:
+
+  For bash: add to ~/.bashrc
+  For zsh:  add to ~/.zshrc
+
+Snippet:
+"""
+
+
+def install_auto_explain() -> None:
+    """Print the auto-explain shell snippet and setup instructions."""
+    from rich.panel import Panel
+    from rich.syntax import Syntax
+
+    output.console.rule("[bold cyan]errex — Auto-Explain Shell Integration[/bold cyan]")
+    output.console.print()
+    output.console.print(_AUTO_EXPLAIN_INSTRUCTIONS)
+    output.console.print(
+        Panel(
+            Syntax(_AUTO_EXPLAIN_SNIPPET, "bash", theme="monokai", line_numbers=False),
+            title="Shell snippet",
+            expand=False,
+        )
+    )
+    output.console.print(
+        "\n[dim]After adding, restart your shell or run: source ~/.bashrc (or ~/.zshrc)[/dim]"
+    )
+    output.console.print(
+        "[dim]Once active, any command that fails will automatically have its exit code explained.[/dim]\n"
+    )

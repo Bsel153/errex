@@ -57,3 +57,52 @@ def watch_file(path: str, model: str, brief: bool, lang: str | None) -> None:
                     time.sleep(0.1)
         except KeyboardInterrupt:
             output.console.print("\n[dim]Stopped watching.[/dim]")
+
+
+def watch_directory(path: str) -> None:
+    """Poll DIR every 2s for new .log files; display new files in a rich panel."""
+    import os
+    from rich.panel import Panel
+
+    if not os.path.isdir(path):
+        output.err_console.print(f"[red]errex: directory not found: {path}[/red]")
+        sys.exit(1)
+
+    output.console.print(
+        f"[bold]Watching directory[/bold] [cyan]{path}[/cyan] "
+        f"[dim]for new .log files (Ctrl+C to stop)[/dim]"
+    )
+
+    seen: set[str] = set()
+
+    # Seed with existing log files so we don't re-report them
+    for root, _dirs, files in os.walk(path):
+        for fname in files:
+            if fname.endswith(".log"):
+                seen.add(os.path.join(root, fname))
+
+    try:
+        while True:
+            time.sleep(2)
+            for root, _dirs, files in os.walk(path):
+                for fname in files:
+                    if not fname.endswith(".log"):
+                        continue
+                    fpath = os.path.join(root, fname)
+                    if fpath in seen:
+                        continue
+                    seen.add(fpath)
+                    try:
+                        with open(fpath, encoding="utf-8", errors="replace") as f:
+                            first_lines = "".join(f.readline() for _ in range(10))
+                    except OSError:
+                        first_lines = "(could not read file)"
+                    output.console.print(
+                        Panel(
+                            first_lines.rstrip() or "(empty file)",
+                            title=f"[bold yellow]New log file: {fpath}[/bold yellow]",
+                            expand=False,
+                        )
+                    )
+    except KeyboardInterrupt:
+        output.console.print("\n[dim]Stopped watching directory.[/dim]")

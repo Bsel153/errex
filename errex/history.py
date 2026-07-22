@@ -738,3 +738,81 @@ def pin_entry(pin: bool) -> None:
         output.console.print(f"[green]Pinned[/green] [dim](protected from --clear-history)[/dim]  [dim]{err_snippet}[/dim]")
     else:
         output.console.print(f"[dim]Unpinned[/dim]  [dim]{err_snippet}[/dim]")
+
+
+def show_timeline(days: int = 30) -> None:
+    """Print an ASCII bar chart of error counts grouped by date (last N days)."""
+    from datetime import datetime, timedelta
+
+    if not HISTORY_FILE.exists():
+        output.console.print("[yellow]No history yet.[/yellow]")
+        return
+
+    entries = []
+    try:
+        with open(HISTORY_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+    except OSError:
+        output.console.print("[yellow]Could not read history.[/yellow]")
+        return
+
+    now = datetime.now()
+    cutoff = now - timedelta(days=days)
+
+    # Group by date string
+    daily: dict[str, int] = {}
+    for e in entries:
+        try:
+            ts = datetime.fromisoformat(e.get("timestamp", "2000-01-01"))
+        except ValueError:
+            continue
+        if ts < cutoff:
+            continue
+        date_str = ts.strftime("%Y-%m-%d")
+        daily[date_str] = daily.get(date_str, 0) + 1
+
+    if not daily:
+        output.console.print("[yellow]No history in the last {} days.[/yellow]".format(days))
+        return
+
+    output.console.rule(f"[bold cyan]errex — Timeline (last {days} days)[/bold cyan]")
+    output.console.print()
+
+    # Build the day list in order
+    day_list = []
+    cur = cutoff.date()
+    end = now.date()
+    while cur <= end:
+        day_list.append(str(cur))
+        cur += timedelta(days=1)
+
+    counts = [daily.get(d, 0) for d in day_list]
+    max_count = max(counts) if counts else 1
+    bar_width = 30
+
+    for date_str, cnt in zip(day_list, counts):
+        bar_len = int(cnt / max_count * bar_width) if max_count > 0 else 0
+        bar = "█" * bar_len
+        label = f"{cnt:>3}" if cnt else "  0"
+        output.console.print(f"  {date_str}  [cyan]{bar:<{bar_width}}[/cyan]  [dim]{label}[/dim]")
+
+    total = sum(counts)
+    non_zero = [c for c in counts if c > 0]
+    avg = total / len(day_list) if day_list else 0
+    if counts and max_count > 0:
+        peak_idx = counts.index(max_count)
+        peak_date = day_list[peak_idx]
+    else:
+        peak_date = "n/a"
+
+    output.console.print()
+    output.console.print(f"  [bold]Peak day:[/bold]        {peak_date} ({max_count} error{'s' if max_count != 1 else ''})")
+    output.console.print(f"  [bold]Average per day:[/bold] {avg:.1f}")
+    output.console.print(f"  [bold]Total in period:[/bold] {total}\n")
+    output.console.rule(style="dim")

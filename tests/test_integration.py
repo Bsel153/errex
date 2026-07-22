@@ -582,3 +582,212 @@ def test_explain_env_file_missing_file(tmp_path):
 def test_scan_diff_flag_accepted():
     r = run(["--scan-diff", "--help"])
     assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# v0.26.0 flags — help-acceptance tests
+# ---------------------------------------------------------------------------
+
+def test_auto_explain_flag_accepted():
+    r = run(["--auto-explain", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_fix_test_flag_accepted():
+    r = run(["--fix-test", "somefile.py", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_watch_dir_flag_accepted():
+    r = run(["--watch-dir", "/tmp", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_build_flag_accepted():
+    r = run(["--explain-build", "somefile.txt", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_k8s_flag_accepted():
+    r = run(["--explain-k8s", "somefile.txt", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_network_flag_accepted():
+    r = run(["--explain-network", "somefile.txt", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_explain_perf_flag_accepted():
+    r = run(["--explain-perf", "somefile.txt", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_cluster_errors_flag_accepted():
+    r = run(["--cluster-errors", "somefile.log", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_git_blame_explain_flag_accepted():
+    r = run(["--git-blame-explain", "file.py:10", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_timeline_flag_accepted():
+    r = run(["--timeline", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_weekly_report_flag_accepted():
+    r = run(["--weekly-report", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_compare_runs_flag_accepted():
+    r = run(["--compare-runs", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_teams_webhook_flag_accepted():
+    r = run(["--teams-webhook", "https://example.com", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_linear_team_flag_accepted():
+    r = run(["--linear-team", "TEAM-1", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_linear_token_flag_accepted():
+    r = run(["--linear-token", "tok", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_github_actions_explain_flag_accepted():
+    r = run(["--github-actions-explain", "https://github.com/o/r/actions/runs/1", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+def test_pagerduty_key_flag_accepted():
+    r = run(["--pagerduty-key", "key", "--help"])
+    assert "unrecognized" not in r.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# v0.26.0 functional integration tests (no API key)
+# ---------------------------------------------------------------------------
+
+def test_auto_explain_prints_snippet(tmp_path):
+    r = run(
+        ["--auto-explain"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    assert "_errex_trap" in r.stdout
+
+
+def test_cluster_errors_basic(tmp_path):
+    log = tmp_path / "test.log"
+    log.write_text(
+        "2024-01-15 10:00:00 ERROR Connection refused\n"
+        "2024-01-15 10:00:01 ERROR Connection refused\n"
+        "2024-01-16 10:00:02 ERROR Out of memory\n"
+    )
+    r = run(
+        ["--cluster-errors", str(log)],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+
+
+def test_timeline_no_history(tmp_path):
+    r = run(
+        ["--timeline"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+
+
+def test_weekly_report_no_history(tmp_path):
+    r = run(
+        ["--weekly-report"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.returncode == 0
+    out = r.stdout + r.stderr
+    assert "no history" in out.lower() or "weekly" in out.lower()
+
+
+def test_explain_build_from_stdin(tmp_path):
+    r = run(
+        ["--explain-build"],
+        input="make: *** [all] Error 1\nsrc/foo.c:10: error: undefined reference to 'bar'",
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    out = r.stdout + r.stderr
+    assert "make" in out.lower()
+
+
+def test_explain_k8s_from_stdin_known_error(tmp_path):
+    r = run(
+        ["--explain-k8s"],
+        input="Status: CrashLoopBackOff\nReason: container keeps crashing",
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    out = r.stdout + r.stderr
+    assert "crash" in out.lower() or "pod" in out.lower()
+
+
+def test_explain_network_from_stdin_known_error(tmp_path):
+    r = run(
+        ["--explain-network"],
+        input="curl: (7) Failed to connect to localhost port 8080: Connection refused",
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+    out = r.stdout + r.stderr
+    assert "connection refused" in out.lower() or "port" in out.lower() or "listening" in out.lower()
+
+
+def test_compare_runs_no_state_file(tmp_path):
+    """--compare-runs should report missing state gracefully."""
+    r = run(
+        ["--compare-runs"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE},
+    )
+    assert r.returncode == 0
+
+
+def test_fix_test_no_api_key(tmp_path):
+    test_file = tmp_path / "test_foo.py"
+    test_file.write_text("def test_broken():\n    assert 1 == 2\n")
+    r = run(
+        ["--fix-test", str(test_file)],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.returncode == 1
+    assert "ANTHROPIC_API_KEY" in (r.stdout + r.stderr)
+
+
+def test_git_blame_explain_no_api_key(tmp_path):
+    r = run(
+        ["--git-blame-explain", "errex/cli.py:1"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.returncode == 1
+    assert "ANTHROPIC_API_KEY" in (r.stdout + r.stderr)
+
+
+def test_github_actions_explain_no_api_key(tmp_path):
+    r = run(
+        ["--github-actions-explain", "https://github.com/o/r/actions/runs/1"],
+        env={"HOME": str(tmp_path), "PYTHONUSERBASE": _PYTHONUSERBASE,
+             "ANTHROPIC_API_KEY": ""},
+    )
+    assert r.returncode == 1
+    assert "ANTHROPIC_API_KEY" in (r.stdout + r.stderr)

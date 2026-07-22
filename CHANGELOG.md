@@ -2,6 +2,25 @@
 
 All notable changes to errex are documented here.
 
+## [0.26.0] — 2026-07-22
+### Added
+- `--auto-explain`: prints a shell snippet (`_errex_trap` + `trap 'ERR'`) and instructions for adding it to your shell config so failed commands automatically have their exit code explained; no API call needed (`errex/setup_tools.py`)
+- `--fix-test FILE`: reads a test file, sends it to Claude asking for the likely failure reason and a corrected version; streams the response; requires `ANTHROPIC_API_KEY` (`errex/code_tools.py`)
+- `--watch-dir DIR`: polls a directory every 2 seconds for new `.log` files and displays each in a rich panel with the first 10 lines; exits cleanly on SIGINT (`errex/watch.py`)
+- `--explain-build [FILE]`: detects build system (make, cargo, npm/yarn, gradle, maven, go build) from content, extracts error lines and file references, prints a rich panel with a plain-English summary; falls back to Claude for unrecognised output; reads stdin if FILE is omitted (`errex/build_explainer.py`)
+- `--explain-k8s [FILE]`: local lookup table for 8 Kubernetes status conditions (CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending, CreateContainerConfigError, FailedScheduling, Terminating stuck, ErrImagePull) printed as a rich table; falls back to Claude for unrecognised text (`errex/explainers.py`)
+- `--explain-network [FILE]`: local patterns for 9 common network errors (Connection refused, NXDOMAIN, unreachable, timeout, SSL_ERROR, DNS failure, curl codes 6/7/28) printed as rich panels; falls back to Claude for unrecognised text (`errex/explainers.py`)
+- `--explain-perf FILE`: detects Python cProfile or Go pprof format, extracts top 10 hotspot lines into a rich table, then asks Claude to explain what is slow and suggest optimisations; requires `ANTHROPIC_API_KEY` (`errex/explainers.py`)
+- `--cluster-errors FILE`: fingerprints every log line (stripping timestamps, hex addresses, UUIDs, IPs, line numbers) and prints a rich table sorted by frequency; accepts `-` for stdin; no API call (`errex/cluster.py`)
+- `--git-blame-explain FILE:LINE`: runs `git blame --porcelain` for the given line, fetches `git show --stat --oneline` for the commit, then asks Claude "why does this code exist?"; requires `ANTHROPIC_API_KEY` and a git repo (`errex/git_tools.py`)
+- `--timeline`: reads history, groups entries by date over the last 30 days, and prints an ASCII bar chart (█ characters) with peak day, average per day, and total; no API call (`errex/history.py`)
+- `--weekly-report`: aggregates the last 7 days of history (total errors, top 5 types, models used, busiest hour); if `ANTHROPIC_API_KEY` is set, asks Claude to write a 3-paragraph narrative report; gracefully handles empty history (`errex/reports.py`)
+- `--compare-runs`: loads `~/.errex_autoscan_state.json` (current) and `.json.bak` (baseline); on first run saves the baseline and instructs to run again; subsequent runs show NEW (+) and RESOLVED (−) findings with unchanged count (`errex/scan_diff.py`)
+- `--teams-webhook URL`: Microsoft Teams incoming webhook integration — `notify_new_ticket`, `notify_scan_summary`, `notify_explanation` using MessageCard format; integrated into scan dispatch alongside Discord and Slack (`errex/teams_notify.py`)
+- `--linear-team TEAM_ID` / `--linear-token TOKEN`: Linear GraphQL API integration — `create_issue` maps errex severity to Linear priority (critical→1 urgent, high→2, medium→3, low→4, info→0); integrated into scan ticket creation alongside Jira (`errex/linear_sync.py`)
+- `--github-actions-explain URL`: parses `https://github.com/{owner}/{repo}/actions/runs/{run_id}`, fetches failed job logs via GitHub API (last 200 lines each), sends to Claude for explanation and fix steps; reuses `--github-token` / `$GITHUB_TOKEN`; requires `ANTHROPIC_API_KEY` (`errex/github_actions.py`)
+- `--pagerduty-key ROUTING_KEY`: PagerDuty Events API v2 — fires incidents for critical/high findings only; severity map: critical→"critical", high→"error"; uses `dedup_key=ticket.id`; integrated into scan dispatch (`errex/pagerduty.py`)
+
 ## [0.25.0] — 2026-07-21
 ### Added
 - `--review-code FILE`: send any local source file to Claude for a structured code review — bugs, security issues, style, and performance; respects `--model`, `--copy`, `--perf`, `--tokens`

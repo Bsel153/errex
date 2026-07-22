@@ -97,3 +97,73 @@ def scan_diff(severity: str | None = None) -> None:
         f"|  Resolved: {len(resolved_ids)}[/dim]"
     )
     output.console.rule(style="dim")
+
+
+# ── Compare runs ─────────────────────────────────────────────────────────────
+
+_BAK_FILE = Path.home() / ".errex_autoscan_state.json.bak"
+
+
+def compare_runs() -> None:
+    """Compare current auto-scan state to a saved baseline (.bak file)."""
+    import json
+    import shutil
+
+    output.console.rule("[bold cyan]errex — Compare Runs[/bold cyan]")
+    output.console.print()
+
+    if not _STATE_FILE.exists():
+        output.console.print(
+            "[yellow]No current auto-scan state found. "
+            "Run [bold]errex --auto-scan 1[/bold] first to generate a state file.[/yellow]"
+        )
+        return
+
+    if not _BAK_FILE.exists():
+        # Save current as baseline
+        shutil.copy2(_STATE_FILE, _BAK_FILE)
+        output.console.print(
+            "[green]Baseline saved.[/green] Run again to compare.\n"
+            f"[dim]Baseline: {_BAK_FILE}[/dim]"
+        )
+        return
+
+    # Load both state files
+    def _load_ids(path) -> set:
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+            if isinstance(data, dict):
+                return set(data.get("finding_ids", data.get("ids", [])))
+        except Exception:
+            pass
+        return set()
+
+    current_ids = _load_ids(_STATE_FILE)
+    previous_ids = _load_ids(_BAK_FILE)
+
+    new_ids = current_ids - previous_ids
+    resolved_ids = previous_ids - current_ids
+    unchanged = len(current_ids & previous_ids)
+
+    if new_ids:
+        output.console.print(f"[bold red]{len(new_ids)} NEW finding(s):[/bold red]\n")
+        for fid in sorted(new_ids):
+            output.console.print(f"  [bold red]+[/bold red] {fid}")
+        output.console.print()
+
+    if resolved_ids:
+        output.console.print(f"[bold green]{len(resolved_ids)} RESOLVED finding(s):[/bold green]\n")
+        for fid in sorted(resolved_ids):
+            output.console.print(f"  [bold green]-[/bold green] {fid}")
+        output.console.print()
+
+    output.console.print(f"[dim]Unchanged: {unchanged}  |  New: {len(new_ids)}  |  Resolved: {len(resolved_ids)}[/dim]")
+
+    if not new_ids and not resolved_ids:
+        output.console.print("\n[green]✓ No changes between runs.[/green]")
+
+    output.console.print()
+    output.console.rule(style="dim")

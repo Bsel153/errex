@@ -362,3 +362,59 @@ def summarize_log(path: str, model: str, copy: bool, show_tokens: bool, perf: bo
     save_history(content[:200], response, model, False)
     if copy:
         output.copy_to_clipboard(response)
+
+
+
+def fix_test(path: str, model: str, copy: bool, show_tokens: bool, perf: bool = False) -> None:
+    """Read a test file, explain likely failures, provide corrected version via Claude."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        output.err_console.print("[red]errex: ANTHROPIC_API_KEY environment variable is not set.[/red]")
+        sys.exit(1)
+
+    content = read_file(path)
+    if not content:
+        output.err_console.print(f"[red]errex: could not read file: {path}[/red]")
+        sys.exit(1)
+
+    prompt = (
+        "This test file appears to be failing. "
+        "Explain the likely failure and provide a corrected version.\n\n"
+        f"File: {Path(path).name}\n\n"
+        f"```\n{content}\n```"
+    )
+
+    output.console.rule(f"[bold cyan]errex — Fix Test: {Path(path).name}[/bold cyan]")
+    print()
+
+    client = anthropic.Anthropic(timeout=_constants.API_TIMEOUT)
+    collected = []
+    input_tokens = output_tokens = 0
+    t0 = time.time()
+    try:
+        with client.messages.stream(
+            model=model,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        ) as stream:
+            for text in stream.text_stream:
+                print(text, end="", flush=True)
+                collected.append(text)
+            final = stream.get_final_message()
+            input_tokens = final.usage.input_tokens
+            output_tokens = final.usage.output_tokens
+    except anthropic.APIError as e:
+        output.err_console.print(f"\n[red]errex: API error — {e}[/red]")
+        sys.exit(2)
+
+    response = "".join(collected)
+    print()
+    if show_tokens:
+        output.show_token_usage(input_tokens, output_tokens)
+    if perf:
+        output.show_perf(time.time() - t0, output_tokens)
+    output.console.rule(style="dim")
+    print()
+
+    save_history(content[:200], response, model, False)
+    if copy:
+        output.copy_to_clipboard(response)

@@ -452,6 +452,42 @@ def main() -> None:
     parser.add_argument("--scan-diff", action="store_true", dest="scan_diff",
                         help="compare current scan to the last auto-scan state; show new and resolved findings")
 
+    # v0.26.0 flags
+    parser.add_argument("--auto-explain", action="store_true", dest="auto_explain",
+                        help="print a shell snippet that auto-explains non-zero exit codes")
+    parser.add_argument("--fix-test", metavar="FILE", dest="fix_test",
+                        help="explain likely test failures and provide a corrected version (requires API key)")
+    parser.add_argument("--watch-dir", metavar="DIR", dest="watch_dir",
+                        help="watch a directory for new .log files and display them in rich panels")
+    parser.add_argument("--explain-build", metavar="FILE", dest="explain_build", nargs="?", const="-",
+                        help="explain a build failure from FILE (or stdin if omitted)")
+    parser.add_argument("--explain-k8s", metavar="FILE", dest="explain_k8s", nargs="?", const="-",
+                        help="explain Kubernetes pod status conditions from FILE (or stdin)")
+    parser.add_argument("--explain-network", metavar="FILE", dest="explain_network", nargs="?", const="-",
+                        help="explain network errors from FILE (or stdin)")
+    parser.add_argument("--explain-perf", metavar="FILE", dest="explain_perf",
+                        help="explain a performance profile (Python cProfile or Go pprof)")
+    parser.add_argument("--cluster-errors", metavar="FILE", dest="cluster_errors",
+                        help="cluster log lines by error fingerprint and show frequency table (use - for stdin)")
+    parser.add_argument("--git-blame-explain", metavar="FILE:LINE", dest="git_blame_explain",
+                        help="explain why a line of code exists using git blame history")
+    parser.add_argument("--timeline", action="store_true", dest="timeline",
+                        help="show an ASCII bar chart of error history for the last 30 days")
+    parser.add_argument("--weekly-report", action="store_true", dest="weekly_report",
+                        help="show an aggregated weekly error report (uses Claude if API key is set)")
+    parser.add_argument("--compare-runs", action="store_true", dest="compare_runs",
+                        help="compare current auto-scan state to saved baseline; save baseline on first run")
+    parser.add_argument("--teams-webhook", metavar="URL", dest="teams_webhook",
+                        help="Microsoft Teams incoming webhook URL for scan notifications")
+    parser.add_argument("--linear-team", metavar="TEAM_ID", dest="linear_team",
+                        help="Linear team ID for creating issues from scan findings")
+    parser.add_argument("--linear-token", metavar="TOKEN", dest="linear_token",
+                        help="Linear API token (prefer env var LINEAR_TOKEN)")
+    parser.add_argument("--github-actions-explain", metavar="URL", dest="github_actions_explain",
+                        help="explain a failed GitHub Actions run (pass run URL)")
+    parser.add_argument("--pagerduty-key", metavar="ROUTING_KEY", dest="pagerduty_key",
+                        help="PagerDuty routing key for firing incidents on critical/high findings")
+
     parser.set_defaults(**config)
     args = parser.parse_args()
 
@@ -588,6 +624,120 @@ def main() -> None:
     if getattr(args, "scan_diff", False):
         from .scan_diff import scan_diff
         scan_diff(severity=getattr(args, "scan_severity", None))
+        return
+
+    if getattr(args, "auto_explain", False):
+        from .setup_tools import install_auto_explain
+        install_auto_explain()
+        return
+
+    if getattr(args, "fix_test", None):
+        from .code_tools import fix_test
+        fix_test(
+            args.fix_test,
+            model=args.model,
+            copy=args.copy or False,
+            show_tokens=getattr(args, "tokens", False),
+            perf=args.perf,
+        )
+        return
+
+    if getattr(args, "watch_dir", None):
+        from .watch import watch_directory
+        watch_directory(args.watch_dir)
+        return
+
+    if getattr(args, "explain_build", None) is not None:
+        from .build_explainer import explain_build
+        _build_src = args.explain_build
+        if _build_src == "-" or _build_src is None:
+            if not sys.stdin.isatty():
+                _build_text = sys.stdin.read().strip()
+            else:
+                output.console.print("[dim]Paste build output below. Press Ctrl+D when done:[/dim]\n")
+                _build_text = sys.stdin.read().strip()
+        else:
+            from .utils import read_file
+            _build_text = read_file(_build_src)
+        if not _build_text:
+            output.err_console.print("[red]errex: no build output provided.[/red]")
+            sys.exit(1)
+        explain_build(_build_text, model=args.model)
+        return
+
+    if getattr(args, "explain_k8s", None) is not None:
+        from .explainers import explain_k8s
+        _k8s_src = args.explain_k8s
+        if _k8s_src == "-" or _k8s_src is None:
+            if not sys.stdin.isatty():
+                _k8s_text = sys.stdin.read().strip()
+            else:
+                output.console.print("[dim]Paste kubectl output below. Press Ctrl+D when done:[/dim]\n")
+                _k8s_text = sys.stdin.read().strip()
+        else:
+            from .utils import read_file as _rf
+            _k8s_text = _rf(_k8s_src)
+        if not _k8s_text:
+            output.err_console.print("[red]errex: no k8s output provided.[/red]")
+            sys.exit(1)
+        explain_k8s(_k8s_text, model=args.model)
+        return
+
+    if getattr(args, "explain_network", None) is not None:
+        from .explainers import explain_network
+        _net_src = args.explain_network
+        if _net_src == "-" or _net_src is None:
+            if not sys.stdin.isatty():
+                _net_text = sys.stdin.read().strip()
+            else:
+                output.console.print("[dim]Paste network error output below. Press Ctrl+D when done:[/dim]\n")
+                _net_text = sys.stdin.read().strip()
+        else:
+            from .utils import read_file as _rf2
+            _net_text = _rf2(_net_src)
+        if not _net_text:
+            output.err_console.print("[red]errex: no network error output provided.[/red]")
+            sys.exit(1)
+        explain_network(_net_text, model=args.model)
+        return
+
+    if getattr(args, "explain_perf", None):
+        from .explainers import explain_perf
+        explain_perf(args.explain_perf, model=args.model)
+        return
+
+    if getattr(args, "cluster_errors", None):
+        from .cluster import cluster_errors
+        cluster_errors(args.cluster_errors)
+        return
+
+    if getattr(args, "git_blame_explain", None):
+        from .git_tools import explain_git_blame
+        explain_git_blame(args.git_blame_explain, model=args.model)
+        return
+
+    if getattr(args, "timeline", False):
+        from .history import show_timeline
+        show_timeline(days=30)
+        return
+
+    if getattr(args, "weekly_report", False):
+        from .reports import weekly_report
+        weekly_report()
+        return
+
+    if getattr(args, "compare_runs", False):
+        from .scan_diff import compare_runs
+        compare_runs()
+        return
+
+    if getattr(args, "github_actions_explain", None):
+        from .github_actions import explain_github_actions
+        explain_github_actions(
+            args.github_actions_explain,
+            model=args.model,
+            token=getattr(args, "github_token", None) or config.get("github_token"),
+        )
         return
 
     if args.scan_schedule:
@@ -1260,7 +1410,7 @@ def main() -> None:
             if vr["new_issues"]:
                 output.console.print(f"[red]! New issues:[/red] {', '.join(vr['new_issues'])}")
 
-        # ── Ticket + GitHub + Discord + Slack + Jira integration ────────────────
+        # ── Ticket + GitHub + Discord + Slack + Jira + Teams + Linear + PagerDuty ─
         # Flags take priority; fall back to config file, then env vars
         _gh_repo    = getattr(args, "github_repo", None)  or config.get("github_repo")
         _gh_token   = getattr(args, "github_token", None) or config.get("github_token")
@@ -1272,8 +1422,21 @@ def main() -> None:
                        or __import__("os").environ.get("ERREX_SLACK_WEBHOOK"))
         _jira_proj  = (getattr(args, "jira_project", None) or config.get("jira_project")
                        or __import__("os").environ.get("JIRA_PROJECT"))
+        _teams_hook = (getattr(args, "teams_webhook", None)
+                       or config.get("teams_webhook")
+                       or __import__("os").environ.get("ERREX_TEAMS_WEBHOOK"))
+        _linear_team  = (getattr(args, "linear_team", None)
+                         or config.get("linear_team")
+                         or __import__("os").environ.get("LINEAR_TEAM_ID"))
+        _linear_token = (getattr(args, "linear_token", None)
+                         or config.get("linear_token")
+                         or __import__("os").environ.get("LINEAR_TOKEN"))
+        _pd_key = (getattr(args, "pagerduty_key", None)
+                   or config.get("pagerduty_key")
+                   or __import__("os").environ.get("PAGERDUTY_ROUTING_KEY"))
         _sync_on = bool(_sync_url or _os.environ.get("ERREX_SYNC_URL"))
-        if result.findings and (_gh_repo or _disc_hook or _slack_hook or _jira_proj or _sync_on):
+        if result.findings and (_gh_repo or _disc_hook or _slack_hook or _jira_proj
+                                or _teams_hook or _linear_team or _pd_key or _sync_on):
             from .tickets import create_ticket, find_by_finding_id
             from .discord_notify import notify_new_ticket, notify_scan_summary
             if _sync_on:
@@ -1328,9 +1491,26 @@ def main() -> None:
                         output.console.print(f"  [dim]Jira {jr['key']} created → {jr.get('url', '')}[/dim]")
                     elif "error" in jr:
                         output.console.print(f"  [yellow]Jira: {jr['error']}[/yellow]")
+                if _teams_hook:
+                    from .teams_notify import notify_new_ticket as _teams_new
+                    _teams_new(ticket, webhook_url=_teams_hook, github_issue_url=gh_issue_url)
+                if _linear_team and _linear_token:
+                    from .linear_sync import create_issue as _linear_create
+                    lr = _linear_create(ticket, team_id=_linear_team, token=_linear_token)
+                    if lr.get("identifier"):
+                        output.console.print(f"  [dim]Linear {lr['identifier']} created → {lr.get('url', '')}[/dim]")
+                    elif "error" in lr:
+                        output.console.print(f"  [yellow]Linear: {lr['error']}[/yellow]")
+                if _pd_key and finding.severity in ("critical", "high"):
+                    from .pagerduty import create_incident
+                    pd_r = create_incident(ticket, routing_key=_pd_key)
+                    if pd_r.get("ok"):
+                        output.console.print(f"  [dim]PagerDuty incident triggered.[/dim]")
+                    elif "error" in pd_r:
+                        output.console.print(f"  [yellow]PagerDuty: {pd_r['error']}[/yellow]")
                 if _sync_on:
                     sync_ticket_event(ticket, "opened", url=_sync_url, key=_sync_key)
-            if _disc_hook or _slack_hook:
+            if _disc_hook or _slack_hook or _teams_hook:
                 from .tickets import get_open_tickets
                 _open = get_open_tickets()
                 open_tickets = len(_open)
@@ -1340,6 +1520,9 @@ def main() -> None:
                 if _slack_hook:
                     from .slack_notify import notify_scan_summary as _slack_summary
                     _slack_summary(open_tickets, crit_count, new_tickets, webhook_url=_slack_hook)
+                if _teams_hook:
+                    from .teams_notify import notify_scan_summary as _teams_summary
+                    _teams_summary(result.findings, webhook_url=_teams_hook)
             if new_tickets:
                 output.console.print(f"\n  [cyan]{new_tickets} new ticket(s) created.[/cyan] Run [bold]errex --tickets[/bold] to view.\n")
         return
