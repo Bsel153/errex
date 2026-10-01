@@ -338,6 +338,237 @@ errex --suggest-fixes --scan-severity high
 |------|-------------|
 | `--suggest-fixes` | Scan the system and ask Claude for concrete shell commands to fix each finding |
 
+### Code review
+
+```bash
+errex --review-code src/auth.py          # review any source file for bugs, security, style
+errex --review-code app.py --copy        # copy review to clipboard
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--review-code FILE` | Stream a structured Claude code review (bugs, security, style, performance) for any local file |
+
+### Interactive chat
+
+```bash
+errex --chat-about "OOMKilled in Kubernetes"
+errex --chat-about "why is my Redis connection timing out"
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--chat-about TOPIC` | Open a multi-turn Claude chat session about any topic; blank line or Ctrl+C exits |
+
+### Slack explanation delivery
+
+```bash
+errex --slack-webhook https://hooks.slack.com/... --notify-slack myapp.log
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--notify-slack` | Post the explanation to Slack after a successful explain (requires `--slack-webhook`) |
+
+### .env file explainer
+
+```bash
+errex --explain-env-file .env
+errex --explain-env-file .env.production
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-env-file FILE` | Parse a `.env` file and show a table of each variable with its description; secrets are masked |
+
+### Scan diff
+
+```bash
+errex --scan-diff      # what changed since the last --auto-scan run?
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--scan-diff` | Show new findings (+) and resolved findings (−) relative to the last auto-scan state |
+
+### Auto-explain shell hook
+
+```bash
+errex --auto-explain   # prints snippet to add to .bashrc / .zshrc
+```
+
+After adding the snippet, any command that exits non-zero automatically triggers `errex --explain-exit $?` — no manual copy-paste needed.
+
+| Flag | What it does |
+|------|-------------|
+| `--auto-explain` | Print the `_errex_trap` shell snippet and instructions for installing it |
+
+### Fix failing tests
+
+```bash
+errex --fix-test tests/test_auth.py
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--fix-test FILE` | Read a test file, send it to Claude, and stream back an explanation of why it fails plus a corrected version |
+
+### Watch a directory
+
+```bash
+errex --watch-dir /var/log/myapp/
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--watch-dir DIR` | Poll DIR for new `.log` files; print a rich panel for each new file as it appears |
+
+### Build output explainer
+
+```bash
+cargo build 2>&1 | errex --explain-build
+make 2>&1 | errex --explain-build
+npm run build 2>&1 > build.log && errex --explain-build build.log
+```
+
+Detects make, cargo, npm/yarn, gradle, maven, and go build output automatically.
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-build` | Parse build failure output (file or stdin), extract error lines, explain in plain English |
+
+### Kubernetes explainer
+
+```bash
+kubectl get pods 2>&1 | errex --explain-k8s
+errex --explain-k8s pod-describe.txt
+```
+
+Instantly explains CrashLoopBackOff, OOMKilled, ImagePullBackOff, Pending, and more from a local lookup table.
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-k8s FILE` | Explain kubectl output or Kubernetes YAML errors; local lookup for common issues |
+
+### Network diagnostics
+
+```bash
+curl -v https://example.com 2>&1 | errex --explain-network
+ping -c 3 host 2>&1 | errex --explain-network
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-network` | Diagnose ping/curl/traceroute/nslookup output — connection refused, DNS failures, timeouts, TLS errors |
+
+### Performance profile explainer
+
+```bash
+python -m cProfile -o profile.out myapp.py
+errex --explain-perf profile.out
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--explain-perf FILE` | Parse Python cProfile or Go pprof output, show a hotspot table, and ask Claude to explain what's slow |
+
+### Cluster log errors
+
+```bash
+errex --cluster-errors /var/log/syslog
+errex --cluster-errors app.log | head -20
+```
+
+Groups thousands of log lines into a ranked frequency table — no API call, instant.
+
+| Flag | What it does |
+|------|-------------|
+| `--cluster-errors FILE` | Fingerprint log lines (strip timestamps/addresses/IDs), group by pattern, show count table |
+
+### Git blame explainer
+
+```bash
+errex --git-blame-explain src/auth.py:87
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--git-blame-explain FILE:LINE` | Run git blame on a line, pull commit history, and ask Claude to explain *why* that code exists |
+
+### Error timeline
+
+```bash
+errex --timeline
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--timeline` | Print an ASCII bar chart of your error history over the last 30 days |
+
+### Weekly report
+
+```bash
+errex --weekly-report
+errex --weekly-report --slack-webhook https://hooks.slack.com/...
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--weekly-report` | Aggregate last 7 days of history and generate an AI narrative report; optionally post to Slack |
+
+### Compare scan runs
+
+```bash
+errex --compare-runs   # diff current scan state against the saved baseline
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--compare-runs` | Show new findings and resolved findings relative to a saved scan baseline |
+
+### Microsoft Teams notifications
+
+```bash
+errex --scan --teams-webhook https://outlook.office.com/webhook/...
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--teams-webhook URL` | Post scan findings and ticket events to a Microsoft Teams channel |
+
+### Linear issue sync
+
+```bash
+errex --scan --linear-team ENG --linear-token lin_api_...
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--linear-team TEAM_ID` | Linear team identifier to create issues in |
+| `--linear-token TOKEN` | Linear API token (or set `LINEAR_TOKEN` env var) |
+
+### PagerDuty incidents
+
+```bash
+errex --scan --pagerduty-key pdXXXXXX
+```
+
+Creates PagerDuty incidents automatically for critical and high severity scan findings.
+
+| Flag | What it does |
+|------|-------------|
+| `--pagerduty-key ROUTING_KEY` | PagerDuty Events API v2 routing key; fires incidents for critical/high findings |
+
+### GitHub Actions explainer
+
+```bash
+errex --github-actions-explain https://github.com/owner/repo/actions/runs/123456
+```
+
+| Flag | What it does |
+|------|-------------|
+| `--github-actions-explain URL` | Fetch failed job logs from a GitHub Actions run and explain why it failed |
+
 ### Pro license
 
 ```bash
